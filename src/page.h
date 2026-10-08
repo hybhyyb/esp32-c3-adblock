@@ -8,7 +8,7 @@
 // from /stats.json and is shown on the Overview card and the Lists tab.
 
 const char PAGE[] PROGMEM = R"HTML(<!doctype html><html><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
-<title>C3 AdBlock</title><style>
+<title>C3 AdBlock</title><link rel=icon href=/favicon.svg type=image/svg+xml><style>
 body{font:14px system-ui,sans-serif;margin:0;background:#0d1117;color:#c9d1d9}
 header{background:#161b22;padding:14px 18px;border-bottom:1px solid #30363d;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;position:sticky;top:0;z-index:5}
 h1{margin:0;font-size:18px}h1 span{color:#3fb950}.wrap{padding:16px;max-width:1000px;margin:auto}

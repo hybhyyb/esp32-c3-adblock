@@ -583,6 +583,9 @@ static String htmlEscape(const String& s) {
 
 #include "page.h"   // dashboard HTML (PROGMEM) — see issue #6
 
+// Dashboard favicon (SVG): dark tile + ad banner with a red slash.
+const char FAV_SVG[] PROGMEM = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\"><rect x=\"1\" y=\"1\" width=\"30\" height=\"30\" rx=\"7\" fill=\"#161b22\" stroke=\"#30363d\"/><rect x=\"8\" y=\"11\" width=\"16\" height=\"9\" rx=\"1.5\" fill=\"#c9d1d9\"/><rect x=\"11\" y=\"13.5\" width=\"9\" height=\"2\" rx=\"1\" fill=\"#8b949e\"/><rect x=\"11\" y=\"16.5\" width=\"10\" height=\"2\" rx=\"1\" fill=\"#8b949e\"/><line x1=\"7.5\" y1=\"23.5\" x2=\"24.5\" y2=\"8.5\" stroke=\"#f85149\" stroke-width=\"3\" stroke-linecap=\"round\"/></svg>";
+
 static void handleStats() {
   uint32_t up = millis() / 1000;
   char ut[24]; snprintf(ut, sizeof(ut), "%lud %luh %lum", up/86400, (up%86400)/3600, (up%3600)/60);
@@ -1079,6 +1082,7 @@ void setup() {
   dnsServer.begin(DNS_PORT); upstreamCli.begin(0);
   { const char* hdrs[] = { CSRF_HEADER, "Content-Length" }; web.collectHeaders(hdrs, 2); }  // CSRF for requireAuth(), CL for upload space check
   web.on("/", []() { web.send_P(200, "text/html", PAGE); });
+  web.on("/favicon.svg", []() { web.send_P(200, "image/svg+xml", FAV_SVG); });
   web.on("/stats.json", handleStats);
   web.on("/health", []() {                          // read-only, unauthenticated (like /stats.json) — for Uptime Kuma/HA
     char h[220];
