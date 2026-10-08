@@ -1,0 +1,9 @@
+# Allowlist: domains that must NEVER be blocked, even if a source list
+# includes them (AdGuard-style @@ rules; build_blocklist.py subtracts these).
+# youtube.com was in Hagezi's list and broke YouTube entirely on the LAN.
+@@||youtube.com^
+@@||youtu.be^
+@@||googlevideo.com^
+@@||ytimg.com^
+@@||ggpht.com^
+@@||youtube-nocookie.com^
