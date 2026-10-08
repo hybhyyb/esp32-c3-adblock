@@ -1,6 +1,6 @@
 # esp32-c3-adblock
 
-[日本語 README](README_JP.md)
+**English** · [Русский](README_RU.md)
 
 A **Pi-hole-style DNS ad-blocker** that runs on a **$2 ESP32-C3** — *no PSRAM required*.
 
@@ -80,8 +80,8 @@ One USB flash to get going — after that, **firmware and blocklist both update 
 cp src/secrets.example.h src/secrets.h
 #    then edit src/secrets.h
 
-# 2. build the blocklist hash table (default = StevenBlack base + Hagezi Light,
-#    ~100k entries, WhatsApp/social safe)
+# 2. build the blocklist hash table (default = Hagezi Pro + StevenBlack +
+#    Schakal RU AdList + AdGuard Russian; ~266k entries, RU sites stay usable)
 python3 tools/build_blocklist.py data/blocklist.bin
 
 # 3. flash firmware + the blocklist filesystem (the one and only USB flash)
@@ -123,18 +123,21 @@ The dashboard at **http://c3adblock.local** does it all:
 
 - **Blocklist** — drop a freshly built `blocklist.bin` into *Blocklist → Upload*, or set a
   URL under *Remote auto-update* and the device pulls a prebuilt `blocklist.bin`
-  on a schedule. A fresh default list is rebuilt **every Monday** by GitHub Actions and
+  on a schedule. A fresh default list is rebuilt **every day** by GitHub Actions and
   published at a stable URL, so pasting this once keeps a device current on its own:
-  `https://github.com/M-Abozaid/esp32-c3-adblock/releases/download/blocklist/blocklist.bin`
-- **Firmware** — upload `.pio/build/c3/firmware.bin` under *Firmware → OTA update*; the
-  device verifies it and reboots into the new image. Or push over WiFi from the CLI:
+  `https://github.com/hybhyyb/esp32-c3-adblock/releases/download/blocklist/blocklist.bin`
+- **Firmware** — upload `.pio/build/c3/firmware.bin` under *Firmware → OTA update* (needs a
+  dual-OTA partition table; the default single-app table flashes firmware over USB instead).
+  Or push over WiFi from the CLI:
   ```bash
   pio run -t upload --upload-port c3adblock.local --upload-protocol espota
   ```
 
-**4 MB flash tradeoff:** firmware OTA needs *two* app slots, which leaves ~1.3 MB for the
-blocklist (**~250k domains max**). The aggressive 537k "ultimate" list only fits the
-single-app partition table (no firmware OTA). Pick your tradeoff in `partitions.csv`.
+**4 MB flash tradeoff:** this repo ships a **single-app** `partitions.csv` — no network
+firmware OTA (flash firmware over USB), which frees **2.63 MB** for blocklists (**~525k
+domains max**) and leaves room for the daily auto-update to write a fresh list alongside
+the live one. Prefer network firmware OTA? Switch to a dual-OTA table — two app slots
+leave ~1.3 MB for the blocklist (**~250k domains max**).
 
 ## Security
 
