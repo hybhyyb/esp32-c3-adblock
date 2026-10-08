@@ -163,8 +163,9 @@ let on=s.blocking!==false;blockstate.dataset.on=on?'1':'0';
 blockdot.textContent=on?'🛡️':'⏸️';blockbar.style.borderColor=on?'#30363d':'#f0883e';
 blockstate.textContent=on?t('blockActive'):(s.resumeIn>0?t('blockPauseIn').replace('{n}',s.resumeIn):t('blockPause'));
 pausebtn.textContent=on?t('pauseBtn'):t('resumeBtn');pausedur.style.display=on?'':'none';
-let lastUpd=(s.uplast&&s.uplast.length)?t('lastUpd')+': '+s.uplast:t('lastUpdNever');
-upfull.textContent=t('lastUpd')+': '+(s.uplast&&s.uplast.length?s.uplast:t('lastUpdNever'));
+function updDateStr(ts){if(!ts)return t('lastUpdNever');return t('lastUpd')+': '+new Date(ts*1000).toLocaleString(l==='ru'?'ru-RU':'en-US',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});}
+let lastUpd=updDateStr(s.uplast);
+upfull.textContent=lastUpd;
 const cvs=[[t('cBlocked'),fmt(s.blocked),'b',''],[t('cAllowed'),fmt(s.allowed),'a',''],
 [t('cDomains'),fmt(s.domains),'',lastUpd],
 [t('cClients'),s.clients.length,'',''],[t('cSignal'),s.rssi+' '+t('rssiUnit'),'',''],

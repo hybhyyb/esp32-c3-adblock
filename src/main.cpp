@@ -164,7 +164,7 @@ String updateUrl = "";              // URL of a prebuilt blocklist.bin (e.g. Git
 uint32_t updateIntervalH = 24;      // hours between auto-fetches
 uint32_t lastCheckMs = 0;
 String updateStatus = "never";
-String lastUpdTs = "";              // wall-clock stamp of last OK list swap, "" if none/NTP unsynced
+uint32_t lastUpdEpoch = 0;          // NTP epoch of last OK list swap, 0 if none
 
 // WiFi provisioning (captive portal)
 DNSServer   dnsPortal;
@@ -523,7 +523,7 @@ static void handleStats() {
              ",\"domains\":" + numHashes + ",\"rssi\":" + WiFi.RSSI() + ",\"temp\":" + String(temperatureRead(), 1) +
              ",\"heap\":" + ESP.getFreeHeap() + ",\"uptime\":\"" + ut + "\"" +
              ",\"upurl\":\"" + jesc(updateUrl) + "\",\"upiv\":" + updateIntervalH + ",\"upstat\":\"" + jesc(updateStatus) +
-              "\",\"uplast\":\"" + jesc(lastUpdTs) + "\"" +
+              "\",\"uplast\":" + String(lastUpdEpoch) + "" +
              ",\"tz\":\"" + jesc(tzStr) + "\"" +
              ",\"today\":{\"blk\":" + blkToday + ",\"alw\":" + alwToday + "}" +
              ",\"yest\":{\"blk\":" + blkYest + ",\"alw\":" + alwYest + "}" +
@@ -700,17 +700,17 @@ static void reopenBlocklist() {
   buildFlashIndex();
 }
 // Remember when the live list last swapped successfully (upload or remote
-// fetch both funnel through commitNewFile). NTP gives us wall clock; before
-// first sync time() is 1970, so a boot-time recovery swap leaves no stamp.
+// fetch both funnel through commitNewFile). We store the NTP epoch; the dashboard
+// formats it in the viewer's own timezone, so the stamp always matches the clock
+// of whoever is looking. Before first sync time() is 1970, so a boot-time
+// recovery swap leaves the stamp at 0.
 static void markUpdateOk() {
   time_t tt = time(nullptr);
   if (tt > 1600000000) {
-    struct tm* lt = localtime(&tt);
-    char buf[24]; strftime(buf, sizeof(buf), "%d.%m.%Y %H:%M", lt);
-    lastUpdTs = buf;
-    prefs.begin("stats", false); prefs.putString("upTs", lastUpdTs); prefs.end();
-  }
-  Serial.printf("[ota] list updated%s\n", lastUpdTs.length() ? (" @ " + lastUpdTs).c_str() : " (NTP not synced yet)");
+    lastUpdEpoch = (uint32_t)tt;
+    prefs.begin("stats", false); prefs.putUInt("upTs", lastUpdEpoch); prefs.end();
+    Serial.printf("[ota] list updated @ %lu\n", (unsigned long)lastUpdEpoch);
+  } else Serial.println("[ota] list updated (NTP not synced yet)");
 }
 static bool commitNewFile() {                        // validated /blocklist.new -> live
   File f = LittleFS.open("/blocklist.new", "r");
@@ -973,7 +973,7 @@ void setup() {
   prefs.begin("stats", true);                      // daily counters survive reboots
   dayToday = prefs.getUInt("day", 0); blkToday = prefs.getUInt("blk", 0); alwToday = prefs.getUInt("alw", 0);
   dayYest = prefs.getUInt("yday", 0); blkYest = prefs.getUInt("yblk", 0); alwYest = prefs.getUInt("yalw", 0);
-  lastUpdTs = prefs.getString("upTs", "");
+  lastUpdEpoch = prefs.getUInt("upTs", 0);
   prefs.end();
   Serial.printf("custom: %d, allow: %d, banned: %d\n", numCustom, numAllow, numBanned);
 
@@ -995,8 +995,7 @@ void setup() {
   // would loop back through the router (board -> router -> board -> ...). Public
   // resolvers keep remote auto-update and NTP working in that configuration.
   WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, IPAddress(8, 8, 8, 8), IPAddress(1, 1, 1, 1));
-  applyTz();
-  configTime(0, 0, "pool.ntp.org", "time.google.com", "ru.pool.ntp.org");
+  configTzTime(tzStr.c_str(), "pool.ntp.org", "time.google.com", "ru.pool.ntp.org");  // sets TZ + starts SNTP in one call
   for (int i = 0; i < 100 && ymdNow() == 0; i++) delay(100);   // up to 10 s for first sync (non-fatal)
   dailyRoll();
   Serial.printf("date: %u tz=%s\n", (unsigned)ymdNow(), tzStr.c_str());
