@@ -99,7 +99,8 @@ static uint8_t cacheRes[CACHE_SIZE];
 static uint8_t cacheValid[CACHE_SIZE];
 static uint8_t rangeBuf[MAX_RANGE * HASH_BYTES];
 
-struct Dev { uint32_t ip; uint8_t mac[6]; uint32_t blocked, allowed, lastSeen; bool banned; String label; };
+struct Dev { uint32_t ip; uint8_t mac[6]; uint32_t blocked, allowed, lastSeen; bool banned; String label;
+             uint32_t secTs, secN, autoUntil; uint8_t noisy; };
 static const int MAX_CLIENTS = 96;
 Dev clients[MAX_CLIENTS]; int numClients = 0;
 
@@ -154,6 +155,41 @@ static void statsFlush(bool force) {
   prefs.putUInt("day", dayToday); prefs.putUInt("blk", blkToday); prefs.putUInt("alw", alwToday);
   prefs.putUInt("yday", dayYest); prefs.putUInt("yblk", blkYest); prefs.putUInt("yalw", alwYest);
   prefs.end();
+}
+
+// 24 h ring of per-hour query totals (RAM only; lost on reboot — fine for a sparkline).
+// Slot index = hour of day in the device's local TZ, so the client can label 00..23.
+static uint32_t hq[24] = {0}, hb[24] = {0};
+static int hHour = -1;                                   // current local hour, -1 = NTP not synced yet
+static void hourCount(bool blocked) { if (hHour >= 0) { hq[hHour]++; if (blocked) hb[hHour]++; } }
+static void hourRoll() {
+  struct tm t;
+  if (!getLocalTime(&t, 0)) return;
+  int h = t.tm_hour;
+  if (h == hHour) return;
+  if (hHour < 0) { memset(hq, 0, sizeof(hq)); memset(hb, 0, sizeof(hb)); }
+  else { int k = hHour; do { k = (k + 1) % 24; hq[k] = 0; hb[k] = 0; } while (k != h); }
+  hHour = h;
+}
+
+// Noisy-client detector: a client blasting >NOISY_LIMIT q/s for NOISY_SECS straight
+// seconds gets a RAM-only temp ban (reboot clears it; manual bans stay). Protects
+// against stray loops/chatty devices without ever persisting a false positive.
+static const int NOISY_LIMIT = 100;
+static const int NOISY_SECS = 5;
+static const uint32_t NOISY_BAN_MS = 10UL * 60 * 1000;
+static void autoBanTick() {
+  uint32_t now = millis();
+  for (int i = 0; i < numClients; i++) {
+    Dev& c = clients[i];
+    if (c.autoUntil && (int32_t)(now - c.autoUntil) >= 0) {      // temp ban expired
+      c.banned = false; c.autoUntil = 0; c.noisy = 0; c.secN = 0;
+      IPAddress ip(c.ip); Serial.printf("[noisy] unbanned %s (temp ban over)\n", ip.toString().c_str());
+    } else if (!c.autoUntil && !c.banned && c.noisy >= NOISY_SECS) {
+      c.banned = true; c.autoUntil = now + NOISY_BAN_MS;
+      IPAddress ip(c.ip); Serial.printf("[noisy] %u q/s from %s -> temp ban 10 min\n", (unsigned)c.secN, ip.toString().c_str());
+    }
+  }
 }
 
 static const int MAX_BAN = 32;
@@ -341,6 +377,7 @@ static Dev* getClient(uint32_t ip) {
   if (numClients < MAX_CLIENTS) {
     Dev* c = &clients[numClients++];
     c->ip = ip; c->blocked = c->allowed = 0; c->lastSeen = millis(); c->banned = isBannedIP(ip); c->label = "";
+    c->secTs = 0; c->secN = 0; c->noisy = 0; c->autoUntil = 0;
     getMac(ip, c->mac); return c;
   }
   return nullptr;
@@ -479,12 +516,18 @@ static bool handleDns() {
     char domain[256]; uint16_t qtype = 0; int qend = qlen;
     size_t dl = parseQuery(buf, qlen, domain, &qtype, &qend);
     Dev* c = getClient((uint32_t)cip);
+    if (c) {                                    // per-client query rate -> noisy detector
+      uint32_t now = millis();
+      if (now - c->secTs >= 1000) { c->secTs = now; c->secN = 1; }
+      else if (++c->secN > NOISY_LIMIT) { if (c->noisy < 100) c->noisy++; }
+      else if (c->noisy) c->noisy--;
+    }
     bool ban = c && c->banned;
     bool blocked = ban || (blockingOn && dl && numHashes && isBlocked(domain));
     if (dl) qlogAdd(domain, (uint32_t)cip, blocked);
     int rlen;
-    if (blocked) { rlen = buildBlocked(qend, qtype); totalBlocked++; blkToday++; if (c) c->blocked++; }
-    else         { totalAllowed++; alwToday++; if (c) c->allowed++; fwdStart(qlen, qend, cip, cport); rlen = 0; }
+    if (blocked) { rlen = buildBlocked(qend, qtype); totalBlocked++; blkToday++; hourCount(true); if (c) c->blocked++; }
+    else         { totalAllowed++; alwToday++; hourCount(false); if (c) c->allowed++; fwdStart(qlen, qend, cip, cport); rlen = 0; }
     if (rlen > 0) sendReply(cip, cport, rlen);
   }
   return did;
@@ -524,6 +567,9 @@ static void handleStats() {
              ",\"heap\":" + ESP.getFreeHeap() + ",\"uptime\":\"" + ut + "\"" +
              ",\"upurl\":\"" + jesc(updateUrl) + "\",\"upiv\":" + updateIntervalH + ",\"upstat\":\"" + jesc(updateStatus) +
               "\",\"uplast\":" + String(lastUpdEpoch) + "" +
+             ",\"listbytes\":" + String(numHashes * HASH_BYTES) +
+             ",\"fsUsed\":" + String((uint32_t)LittleFS.usedBytes()) +
+             ",\"fsTotal\":" + String((uint32_t)LittleFS.totalBytes()) +
              ",\"tz\":\"" + jesc(tzStr) + "\"" +
              ",\"today\":{\"blk\":" + blkToday + ",\"alw\":" + alwToday + "}" +
              ",\"yest\":{\"blk\":" + blkYest + ",\"alw\":" + alwYest + "}" +
@@ -532,7 +578,7 @@ static void handleStats() {
              ",\"defcreds\":" + ((strcmp(WEB_PASS, "CHANGE_ME_WEB_PASSWORD") == 0 || strcmp(OTA_PASS, "CHANGE_ME_OTA_PASSWORD") == 0) ? "true" : "false") +
              ",\"clients\":[";
   for (int i = 0; i < numClients; i++) { Dev& c = clients[i]; IPAddress ip(c.ip);
-    j += (i ? "," : ""); j += "{\"ip\":\"" + ip.toString() + "\",\"mac\":\"" + macStr(c.mac) + "\",\"blocked\":" + c.blocked + ",\"allowed\":" + c.allowed + ",\"banned\":" + (c.banned?"true":"false") + "}"; }
+    j += (i ? "," : ""); j += "{\"ip\":\"" + ip.toString() + "\",\"mac\":\"" + macStr(c.mac) + "\",\"blocked\":" + c.blocked + ",\"allowed\":" + c.allowed + ",\"banned\":" + (c.banned?"true":"false") + ",\"qps\":" + c.secN + ",\"noisy\":" + (c.noisy?"true":"false") + "}"; }
   j += "],\"custom\":[";
   for (int i = 0; i < numCustom; i++) { j += (i ? "," : ""); j += "\"" + jesc(customDom[i]) + "\""; }
   j += "],\"allow\":[";
@@ -1010,6 +1056,23 @@ void setup() {
   { const char* hdrs[] = { CSRF_HEADER, "Content-Length" }; web.collectHeaders(hdrs, 2); }  // CSRF for requireAuth(), CL for upload space check
   web.on("/", []() { web.send_P(200, "text/html", PAGE); });
   web.on("/stats.json", handleStats);
+  web.on("/health", []() {                          // read-only, unauthenticated (like /stats.json) — for Uptime Kuma/HA
+    char h[220];
+    snprintf(h, sizeof(h),
+             "{\"status\":\"ok\",\"uptime_s\":%lu,\"uptime\":%lu,\"blocked_today\":%lu,\"allowed_today\":%lu,\"domains\":%u,\"temp\":%.1f,\"heap\":%u,\"rssi\":%d,\"fs_used\":%u,\"fs_total\":%u,\"blocking\":%s}",
+             (unsigned long)(millis() / 1000), (unsigned long)(millis() / 1000), (unsigned long)blkToday,
+             (unsigned long)alwToday, numHashes, temperatureRead(), (unsigned)ESP.getFreeHeap(), WiFi.RSSI(),
+             (uint32_t)LittleFS.usedBytes(), (uint32_t)LittleFS.totalBytes(), blockingOn ? "true" : "false");
+    web.send(200, "application/json", h);
+  });
+  web.on("/hourly", []() {                          // 24 per-hour query totals for the dashboard sparkline
+    String j = "{\"q\":[";
+    for (int i = 0; i < 24; i++) { j += (i ? "," : ""); j += String(hq[i]); }
+    j += "],\"b\":[";
+    for (int i = 0; i < 24; i++) { j += (i ? "," : ""); j += String(hb[i]); }
+    j += "],\"last\":" + String(hHour) + "}";
+    web.send(200, "application/json", j);
+  });
   web.on("/ban", handleBan);
   web.on("/addblock", []() { if (!requireAuth()) return; addCustom(web.arg("d")); web.send(200, "text/plain", "ok"); });
   web.on("/unblock", []() { if (!requireAuth()) return; removeCustom(web.arg("d")); web.send(200, "text/plain", "ok"); });
@@ -1073,6 +1136,8 @@ void loop() {
   lt0 = lnow;
   static uint32_t lday = 0;
   if (lnow - lday > 5000) { lday = lnow; dailyRoll(); statsFlush(false); }
+  static uint32_t lhr = 0;
+  if (lnow - lhr > 1000) { lhr = lnow; hourRoll(); autoBanTick(); }
   static uint32_t lr = 0;
   if (lnow - lr > 10000) { lr = lnow; int act = 0; for (int i = 0; i < MAX_PENDING; i++) act += pend[i].valid ? 1 : 0;
     Serial.printf("[wifi] rssi=%d active=%d rx=%u idle=%u pass=%u sent=%u txfail=%u done=%u exp=%u unmt=%u replyTx=%u replyFail=%u drop=%u | txq n=%d staged=%u sent=%u giveup=%u qdrop=%u heap=%u big=%u\n",

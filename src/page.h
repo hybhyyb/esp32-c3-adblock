@@ -54,12 +54,17 @@ form{margin-bottom:6px}
 
 <section class="sec on" id=sec-ov>
 <div class=cards id=sys></div>
+<div class=cards>
+<div class=card style="min-width:230px;flex:1"><div class=l data-i=hFlash>ФЛЕШ-ХРАНИЛИЩЕ</div><div id=fsbar style="margin-top:8px;font-size:12px"></div></div>
+<div class=card style="flex:2;min-width:320px"><div class=l data-i=hTraffic>ЗАПРОСЫ DNS — ПОСЛЕДНИЕ 24 Ч</div>
+<div style="position:relative;margin-top:6px"><svg id=spark viewBox="0 0 340 80" preserveAspectRatio="none" style="width:100%;height:80px;display:block"></svg><div id=sparkhint style="pointer-events:none"></div></div></div>
+</div>
 </section>
 
 <section class=sec id=sec-log>
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:10px;flex-wrap:wrap">
 <span class=muted data-i=qNote>последние 128 запросов, решает плата: заблокирован (красный) или пропущен в роутер (зелёный)</span>
-<select id=qf><option value="" data-i=qfAll>все запросы</option><option value=b data-i=qfBlocked>только заблокированные</option><option value=a data-i=qfAllowed>только пропущенные</option></select></div>
+<input id=qsearch size=20 data-i-ph=qsearchPh> <select id=qf><option value="" data-i=qfAll>все запросы</option><option value=b data-i=qfBlocked>только заблокированные</option><option value=a data-i=qfAllowed>только пропущенные</option></select></div>
 <table id=qt><thead><tr><th data-i=thDomain>Домен</th><th data-i=thClient>Клиент</th><th data-i=thVerdict>Решение</th><th data-i=thWhen>Когда</th></tr></thead><tbody></tbody></table>
 </section>
 
@@ -78,10 +83,12 @@ form{margin-bottom:6px}
 <div class=muted data-i-html=upNote>соберите <code>blocklist.bin</code> командой <code>tools/build_blocklist.py</code> и загрузите его сюда &mdash; без USB</div>
 <h2 data-i=hCustom>СВОИ БЛОКИРУЕМЫЕ ДОМЕНЫ</h2>
 <div style=margin-bottom:8px><input id=dom placeholder="мой-пример.net" size=30 data-i-ph=domPh><button onclick=addDom() data-i=addDomBtn>Заблокировать домен</button></div>
+<div style=margin-bottom:8px><input id=csearch size=30 data-i-ph=csearchPh></div>
 <table id=cl><tbody></tbody></table>
 <h2 data-i=hAllow>РАЗРЕШЁННЫЕ ДОМЕНЫ (НЕ БЛОКИРОВАТЬ)</h2>
 <div class=muted data-i-html=allowNote>имеют приоритет над списком и сохраняются при любой замене блэклиста — например, <code>youtube.com</code> вернётся из любого обновления</div>
 <div style=margin-bottom:8px><input id=adom placeholder="youtube.com" size=30 data-i-ph=adomPh><button onclick=addAllowDom() data-i=addAllowBtn>Разрешить домен</button></div>
+<div style=margin-bottom:8px><input id=asearch size=30 data-i-ph=asearchPh></div>
 <table id=al><tbody></tbody></table>
 </section>
 
@@ -104,6 +111,9 @@ pau30:'30 s',pau300:'5 min',pau1800:'30 min',pau0:'until I enable it manually',
 hClients:'CLIENTS',hQlog:'RECENT DNS QUERIES',hCustom:'CUSTOM BLOCKED DOMAINS',hAllow:'ALLOWED DOMAINS (DO NOT BLOCK)',hUpload:'BLOCKLIST — UPLOAD FILE',hUpdate:'BLOCKLIST — INTERNET AUTO-UPDATE',hBackup:'SETTINGS BACKUP',hFw:'FIRMWARE — UPDATE (OTA)',hWifi:'WI-FI',
 thClient:'Client',thMac:'MAC',thBlk:'Blocked',thAllowCnt:'Allowed',thDomain:'Domain',thVerdict:'Decision',thWhen:'When',
 qfAll:'all queries',qfBlocked:'blocked only',qfAllowed:'allowed only',
+qsearchPh:'domain / IP…',csearchPh:'filter custom…',asearchPh:'filter allowed…',
+hFlash:'FLASH STORAGE',hTraffic:'DNS QUERIES — LAST 24 H',sparkHint:'green — total · red — blocked',noisy:'NOISY',
+fsBody:'list {l} MB · used {u} · free {f} of {t} MB',
 qNote:'last 128 queries; the board decides: blocked (red) or passed to router (green)',
 addDomBtn:'Block domain',domPh:'my-example.net',addAllowBtn:'Allow domain',adomPh:'youtube.com',allowNote:'take priority over the list and survive any blocklist replacement — e.g. <code>youtube.com</code> comes back from any update',
 uploadBtn:'Upload list',upNote:'build <code>blocklist.bin</code> with <code>tools/build_blocklist.py</code> and upload it here — no USB needed; the swap keeps the 64 KB space check from the firmware',
@@ -124,6 +134,9 @@ pau30:'30 сек',pau300:'5 мин',pau1800:'30 мин',pau0:'пока не вк
 hClients:'КЛИЕНТЫ',hQlog:'ПОСЛЕДНИЕ DNS-ЗАПРОСЫ',hCustom:'СВОИ БЛОКИРУЕМЫЕ ДОМЕНЫ',hAllow:'РАЗРЕШЁННЫЕ ДОМЕНЫ (НЕ БЛОКИРОВАТЬ)',hUpload:'СПИСОК — ЗАГРУЗКА ФАЙЛА',hUpdate:'СПИСОК — АВТО-ОБНОВЛЕНИЕ ИЗ ИНТЕРНЕТА',hBackup:'РЕЗЕРВНАЯ КОПИЯ НАСТРОЕК',hFw:'ПРОШИВКА — ОБНОВЛЕНИЕ (OTA)',hWifi:'WI-FI',
 thClient:'Клиент',thMac:'MAC',thBlk:'Заблокир.',thAllowCnt:'Пропущено',thDomain:'Домен',thVerdict:'Решение',thWhen:'Когда',
 qfAll:'все запросы',qfBlocked:'только заблокированные',qfAllowed:'только пропущенные',
+qsearchPh:'домен / IP…',csearchPh:'фильтр своих…',asearchPh:'фильтр разрешённых…',
+hFlash:'ФЛЕШ-ХРАНИЛИЩЕ',hTraffic:'ЗАПРОСЫ DNS — 24 Ч',sparkHint:'зелёный — всего · красный — заблокировано',noisy:'ШУМНЫЙ',
+fsBody:'список {l} МБ · занято {u} · свободно {f} из {t} МБ',
 qNote:'последние 128 запросов, решает плата: заблокирован (красный) или пропущен в роутер (зелёный)',
 addDomBtn:'Заблокировать домен',domPh:'мой-пример.net',addAllowBtn:'Разрешить домен',adomPh:'youtube.com',allowNote:'имеют приоритет над списком и сохраняются при любой замене блэклиста — например, <code>youtube.com</code> вернётся из любого обновления',
 uploadBtn:'Загрузить список',upNote:'соберите <code>blocklist.bin</code> командой <code>tools/build_blocklist.py</code> и загрузите его сюда — без USB; обмен проверяет свободное место (запас 64 КБ)',
@@ -166,17 +179,19 @@ pausebtn.textContent=on?t('pauseBtn'):t('resumeBtn');pausedur.style.display=on?'
 function updDateStr(ts){if(!ts)return t('lastUpdNever');return t('lastUpd')+': '+new Date(ts*1000).toLocaleString(l==='ru'?'ru-RU':'en-US',{timeZone:'Europe/Moscow',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})+t('lastUpdMsk');}
 let lastUpd=updDateStr(s.uplast);
 upfull.textContent=lastUpd;
+if(s.fsTotal)fsbar.innerHTML=`<div style="height:8px;background:#21262d;border-radius:4px;overflow:hidden"><div style="height:100%;width:${(s.fsUsed/s.fsTotal*100).toFixed(1)}%;background:#3fb950"></div></div><div style="color:#8b949e;margin-top:5px">${t('fsBody').replace('{l}',(s.listbytes/1048576).toFixed(2)).replace('{u}',(s.fsUsed/1048576).toFixed(2)).replace('{f}',((s.fsTotal-s.fsUsed)/1048576).toFixed(2)).replace('{t}',(s.fsTotal/1048576).toFixed(2))}</div>`;
 const cvs=[[t('cBlocked'),fmt(s.blocked),'b',''],[t('cAllowed'),fmt(s.allowed),'a',''],
 [t('cDomains'),fmt(s.domains),'',lastUpd],
 [t('cClients'),s.clients.length,'',''],[t('cSignal'),s.rssi+' '+t('rssiUnit'),'',''],
 [t('cTemp'),s.temp+t('tempUnit'),'',''],[t('cHeap'),Math.round(s.heap/1024)+' '+t('ramUnit'),'',''],[t('cUptime'),s.uptime,'','']];
 sys.innerHTML=cvs.map(c=>`<div class=card><div class="v ${c[2]}">${c[1]}</div><div class=l>${c[0]}</div>${c[3]?`<div class=lm>${c[3]}</div>`:''}</div>`).join('');
 ct.tBodies[0].innerHTML=s.clients.sort((a,b)=>(b.blocked+b.allowed)-(a.blocked+a.allowed)).map(c=>
-`<tr><td>${c.ip}${c.banned?' <span class=tag style=color:#f85149>'+t('banned')+'</span>':''}</td><td>${c.mac}</td>
+`<tr><td>${c.ip}${c.banned?' <span class=tag style=color:#f85149>'+t('banned')+'</span>':''}${c.noisy?' <span class=tag style=color:#f0883e>'+t('noisy')+'</span>':''}</td><td>${c.mac}</td>
 <td class=b>${fmt(c.blocked)}</td><td class=a>${fmt(c.allowed)}</td>
 <td style=text-align:right><button class=ban data-ip="${c.ip}">${c.banned?t('unbanBtn'):t('banBtn')}</button></td></tr>`).join('')||`<tr><td style=color:#8b949e>${t('qEmpty')}</td></tr>`;
-cl.tBodies[0].innerHTML=s.custom.map(d=>`<tr><td>${esc(d)}</td><td style=text-align:right><button class=rmbtn data-d="${esc(d)}">${t('rmBtn')}</button></td></tr>`).join('')||`<tr><td style=color:#8b949e>${t('custEmpty')}</td></tr>`;
-al.tBodies[0].innerHTML=s.allow.map(d=>`<tr><td class=a>${esc(d)}</td><td style=text-align:right><button class=aldl data-d="${esc(d)}">${t('rmBtn')}</button></td></tr>`).join('')||`<tr><td style=color:#8b949e>${t('allowEmpty')}</td></tr>`;
+const cs=csearch.value.trim().toLowerCase(), ca=asearch.value.trim().toLowerCase();
+cl.tBodies[0].innerHTML=s.custom.filter(d=>!cs||d.toLowerCase().includes(cs)).map(d=>`<tr><td>${esc(d)}</td><td style=text-align:right><button class=rmbtn data-d="${esc(d)}">${t('rmBtn')}</button></td></tr>`).join('')||`<tr><td style=color:#8b949e>${t('custEmpty')}</td></tr>`;
+al.tBodies[0].innerHTML=s.allow.filter(d=>!ca||d.toLowerCase().includes(ca)).map(d=>`<tr><td class=a>${esc(d)}</td><td style=text-align:right><button class=aldl data-d="${esc(d)}">${t('rmBtn')}</button></td></tr>`).join('')||`<tr><td style=color:#8b949e>${t('allowEmpty')}</td></tr>`;
 if(document.activeElement!=uurl)uurl.value=s.upurl||'';
 if(document.activeElement!=uiv)uiv.value=s.upiv||24;
 if(document.activeElement!=tzin)tzin.value=s.tz||'';
@@ -184,9 +199,17 @@ if(s.today&&s.yest)qday.textContent=t('qdayBody').replace('{b}',fmt(s.today.blk)
 ustat.textContent=s.upstat||'—';loadQlog();}
 let qlast=null,qlfail=0;
 async function loadQlog(){if(qlfail)return;try{qlast=await(await fetch('/qlog.json',{headers:CSRF_HDRS})).json();renderQlog();}catch(_){qlfail=1;}}   // 401 until authenticated once — stop polling, reload re-enables
-function renderQlog(){if(!qlast)return;let fl=qf.value;
-qt.tBodies[0].innerHTML=qlast.entries.filter(e=>!fl||(fl=='b'?e.b:!e.b)).reverse().map(e=>`<tr><td>${esc(e.d)}</td><td>${e.ip}</td><td class="${e.b?'b':'a'}">${e.b?t('qBlocked'):t('qPassed')}</td><td>${e.age} ${t('sAgo')}</td></tr>`).join('')||`<tr><td style=color:#8b949e>${t('qEmpty')}</td></tr>`;}
-qf.onchange=renderQlog;
+function renderQlog(){if(!qlast)return;let fl=qf.value,ss=qsearch.value.trim().toLowerCase();
+qt.tBodies[0].innerHTML=qlast.entries.filter(e=>(!fl||(fl=='b'?e.b:!e.b))&&(!ss||e.d.toLowerCase().includes(ss)||e.ip.includes(ss))).reverse().map(e=>`<tr><td>${esc(e.d)}</td><td>${e.ip}</td><td class="${e.b?'b':'a'}">${e.b?t('qBlocked'):t('qPassed')}</td><td>${e.age} ${t('sAgo')}</td></tr>`).join('')||`<tr><td style=color:#8b949e>${t('qEmpty')}</td></tr>`;}
+qf.onchange=renderQlog;qsearch.oninput=renderQlog;csearch.oninput=load;asearch.oninput=load;
+let hd=null;
+async function loadHour(){try{hd=await(await fetch('/hourly')).json();renderSpark();}catch(_){}}
+function sparkPoly(a,W,H,m){return a.map((v,i)=>`${(i*W/24).toFixed(1)},${(H-2-(v||0)*(H-4)/m).toFixed(1)}`).join(' ')}
+function renderSpark(){if(!hd)return;const W=340,H=80,q=hd.q,b=hd.b;let m=1;for(const v of q)if(v>m)m=v;
+spark.innerHTML=`<polyline points="${sparkPoly(q,W,H,m)}" fill="none" stroke="#3fb950" stroke-width="1.5"/><polyline points="${sparkPoly(b,W,H,m)}" fill="none" stroke="#f85149" stroke-width="1.5"/>`;
+let hh='';for(let i=0;i<24;i+=6)hh+=`<span style="position:absolute;left:${((i+0.5)/24*100).toFixed(1)}%;transform:translateX(-50%);font-size:10px;color:#8b949e">${String(i).padStart(2,'0')}</span>`;
+hh+=`<span style="position:absolute;right:0;top:0;font-size:10px;color:#8b949e">${t('sparkHint')}</span>`;
+sparkhint.innerHTML=hh;}
 function addDom(){let d=dom.value.trim();if(d){fetch('/addblock?d='+encodeURIComponent(d),{headers:CSRF_HDRS}).then(()=>{dom.value='';load()})}}
 function addAllowDom(){let d=adom.value.trim();if(d){fetch('/addallow?d='+encodeURIComponent(d),{headers:CSRF_HDRS}).then(()=>{adom.value='';load()})}}
 function forgetWifiIf(){if(confirm(t('forgetConfirm')))forgetWifi()}
@@ -211,5 +234,5 @@ let fd=new FormData();fd.append('f',f);
 try{let r=await fetch('/restore',{method:'POST',headers:CSRF_HDRS,body:fd});rsmsg.textContent=await r.text();}
 catch(_){rsmsg.textContent='✗';}
 rsfile.value='';setTimeout(load,600);};
-setLang(l);setInterval(load,3000);
+setLang(l);setInterval(load,3000);loadHour();setInterval(loadHour,60000);
 </script></body></html>)HTML";
