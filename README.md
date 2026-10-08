@@ -191,6 +191,31 @@ is still open (unencrypted) by design — it needs to be joinable without knowin
 a password first. The real WiFi password you type into the portal is only as
 safe as that local radio link during the brief setup window.
 
+## Network topology
+
+```
+clients (phones · laptops · TVs · IoT)
+        │ DNS queries → 192.168.1.85
+        │ (the router's DHCP hands clients this DNS)
+        ▼
+┌───────────────────────────────────────┐
+│   C3 AdBlock · UDP :53                │
+│   192.168.1.85 · dashboard: c3adblock.local
+│  ┌────────────────┬─────────────────┐ │
+│  │ blocklist hit  │ allowed / miss  │ │
+│  │ → answer 0.0.0.0│ → forward       │ │
+│  └────────────────┴────────┬────────┘ │
+└────────────────────────────┼──────────┘
+                             │ DNS passthrough → 192.168.1.1
+                             ▼
+                     router → ISP resolvers
+```
+
+The board sits one hop below the router on the DNS path: it answers blocked
+queries itself (0.0.0.0) and forwards everything else to the router. The router
+keeps doing DHCP/routing; only the DNS pointer changes. `dig @192.168.1.85
+doubleclick.net` → `0.0.0.0`, `dig @192.168.1.85 github.com` → real IP.
+
 ## Use it
 
 Point a device's DNS at the C3's IP, or add it as a **secondary resolver** behind
@@ -231,6 +256,35 @@ more point of failure. Neither approach can fix first-party in-page ad
 injection (widgets inside `mail.ru` etc.): that needs a browser extension / uBO,
 DNS-level blocking can't see it. Both are DNS-speed (single-digit ms); the
 advantage here is control, freshness and RU coverage, not raw speed.
+
+## FAQ
+
+**YouTube ads are not blocked.** First-party ads are served from the same
+domains as the video, so DNS can't tell them apart — that's a browser-extension
+job (uBlock Origin). Which is exactly why `youtube.com` sits in the default
+allowlist: blocking it would break playback, not just ads.
+
+**My router hands out IPv6 DNS.** The board answers IPv4 UDP :53 only. If
+clients learn a DNS server via IPv6 RA/DHCPv6, they bypass it. Fix on the
+router: keep handing out the IPv4 DNS (this board), or disable the IPv6 DNS
+advertisement. (There is no IPv6 DNS server on the C3.)
+
+**A site I need stopped working.** It's either in an aggressive list or a newly
+added domain. Add it under *Allowed domains* on the dashboard — Allow wins over
+every list and survives updates.
+
+**My router already has a DNS filter.** It usually can't match the RU coverage,
+freshness and control here — see "Why this instead of router-based
+ad-blocking?".
+
+**Move it to another WiFi network.** Dashboard → Settings → *Forget Wi-Fi*, or
+hold **BOOT** while powering on — the setup portal comes back.
+
+**Newest firmware without USB?** The blocklist always updates over WiFi
+(scheduled or a manually uploaded `.bin`). Firmware OTA over WiFi needs the
+dual-OTA partition table; this repo defaults to single-app (bigger blocklist
+budget), so firmware flashes over USB. A deliberate tradeoff — see "4 MB flash
+tradeoff".
 
 ## Gotchas (learned the hard way)
 
