@@ -201,6 +201,37 @@ dig @<c3-ip> doubleclick.net   # -> 0.0.0.0  (blocked)
 dig @<c3-ip> github.com        # -> real IP  (forwarded)
 ```
 
+## Why this instead of router-based ad-blocking?
+
+Keenetic / Asus / TP-Link and other routers ship DNS filtering (Yandex/AdGuard
+DNS profiles, dnsmasq lists), and for most people that's the right answer:
+free, zero extra hardware, nothing to maintain. This device wins where a router
+usually can't:
+
+- **RU coverage + freshness you control.** Vendor profiles are whatever the
+  vendor decided to ship, and RU ad networks (Yandex.Direct, AdFox, VK Ads,
+  MyTarget) often sit on domains routers don't block. Here the list is your own
+  mix (Hagezi Pro + StevenBlack + Schakal RU AdList + AdGuard Russian, ~266k),
+  rebuilt every day by GitHub Actions and pulled automatically.
+- **Vendor-independent updates.** A router's built-in filter updates on the
+  vendor's schedule (or not at all); this device updates itself daily with no
+  firmware involvement.
+- **Surgical allowlist & bans.** Unblock exactly `youtube.com` (survives every
+  list swap), or ban a whole client per-device, from the dashboard. Router
+  filters are usually all-or-nothing per profile.
+- **Logs and counters.** Live DNS query log with per-client block/pass counts
+  and daily totals — routers don't expose this for a DNS filter.
+- **The router itself is untouched.** It's a separate little box on the DNS
+  path: no firmware risk to your router, no dependency on a vendor keeping the
+  feature alive, and it keeps working if you later change routers.
+
+**When it is NOT better:** if you want the simplest possible setup, keep the
+router's built-in filter — one extra device is one more thing to power and one
+more point of failure. Neither approach can fix first-party in-page ad
+injection (widgets inside `mail.ru` etc.): that needs a browser extension / uBO,
+DNS-level blocking can't see it. Both are DNS-speed (single-digit ms); the
+advantage here is control, freshness and RU coverage, not raw speed.
+
 ## Gotchas (learned the hard way)
 
 - **ModemManager** (default on Fedora/Ubuntu) grabs `/dev/ttyACM0` and toggles

@@ -164,6 +164,7 @@ String updateUrl = "";              // URL of a prebuilt blocklist.bin (e.g. Git
 uint32_t updateIntervalH = 24;      // hours between auto-fetches
 uint32_t lastCheckMs = 0;
 String updateStatus = "never";
+String lastUpdTs = "";              // wall-clock stamp of last OK list swap, "" if none/NTP unsynced
 
 // WiFi provisioning (captive portal)
 DNSServer   dnsPortal;
@@ -521,7 +522,8 @@ static void handleStats() {
   String j = "{\"ip\":\"" + WiFi.localIP().toString() + "\",\"blocked\":" + totalBlocked + ",\"allowed\":" + totalAllowed +
              ",\"domains\":" + numHashes + ",\"rssi\":" + WiFi.RSSI() + ",\"temp\":" + String(temperatureRead(), 1) +
              ",\"heap\":" + ESP.getFreeHeap() + ",\"uptime\":\"" + ut + "\"" +
-             ",\"upurl\":\"" + jesc(updateUrl) + "\",\"upiv\":" + updateIntervalH + ",\"upstat\":\"" + jesc(updateStatus) + "\"" +
+             ",\"upurl\":\"" + jesc(updateUrl) + "\",\"upiv\":" + updateIntervalH + ",\"upstat\":\"" + jesc(updateStatus) +
+              "\",\"uplast\":\"" + jesc(lastUpdTs) + "\"" +
              ",\"tz\":\"" + jesc(tzStr) + "\"" +
              ",\"today\":{\"blk\":" + blkToday + ",\"alw\":" + alwToday + "}" +
              ",\"yest\":{\"blk\":" + blkYest + ",\"alw\":" + alwYest + "}" +
@@ -697,6 +699,19 @@ static void reopenBlocklist() {
   numHashes = blocklist ? blocklist.size() / HASH_BYTES : 0;
   buildFlashIndex();
 }
+// Remember when the live list last swapped successfully (upload or remote
+// fetch both funnel through commitNewFile). NTP gives us wall clock; before
+// first sync time() is 1970, so a boot-time recovery swap leaves no stamp.
+static void markUpdateOk() {
+  time_t tt = time(nullptr);
+  if (tt > 1600000000) {
+    struct tm* lt = localtime(&tt);
+    char buf[24]; strftime(buf, sizeof(buf), "%d.%m.%Y %H:%M", lt);
+    lastUpdTs = buf;
+    prefs.begin("stats", false); prefs.putString("upTs", lastUpdTs); prefs.end();
+  }
+  Serial.printf("[ota] list updated%s\n", lastUpdTs.length() ? (" @ " + lastUpdTs).c_str() : " (NTP not synced yet)");
+}
 static bool commitNewFile() {                        // validated /blocklist.new -> live
   File f = LittleFS.open("/blocklist.new", "r");
   size_t sz = f ? f.size() : 0; if (f) f.close();
@@ -706,6 +721,7 @@ static bool commitNewFile() {                        // validated /blocklist.new
   LittleFS.remove(BLOCKLIST_PATH);
   if (!LittleFS.rename("/blocklist.new", BLOCKLIST_PATH)) return false;
   reopenBlocklist();
+  markUpdateOk();
   return true;
 }
 
@@ -957,6 +973,7 @@ void setup() {
   prefs.begin("stats", true);                      // daily counters survive reboots
   dayToday = prefs.getUInt("day", 0); blkToday = prefs.getUInt("blk", 0); alwToday = prefs.getUInt("alw", 0);
   dayYest = prefs.getUInt("yday", 0); blkYest = prefs.getUInt("yblk", 0); alwYest = prefs.getUInt("yalw", 0);
+  lastUpdTs = prefs.getString("upTs", "");
   prefs.end();
   Serial.printf("custom: %d, allow: %d, banned: %d\n", numCustom, numAllow, numBanned);
 
