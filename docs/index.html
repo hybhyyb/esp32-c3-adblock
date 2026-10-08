@@ -24,46 +24,86 @@
   a { color: #58a6ff; }
   .note { color: #8b949e; font-size: 14px; }
   code { background: #21262d; padding: 1px 6px; border-radius: 5px; }
-  .flags { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+  .flags { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
   .flag { background: #21262d; border-radius: 6px; padding: 4px 10px; font-size: 13px; color: #8b949e; }
+  .langs { display: flex; gap: 8px; margin: 16px 0 6px; }
+  .lang-btn { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; border-radius: 8px; padding: 7px 16px; cursor: pointer; font: 600 14px system-ui; }
+  .lang-btn.on { background: #3fb950; color: #000; border-color: #3fb950; }
+  .lang { display: none; }
+  .lang.on { display: block; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>🛡️ <span class="g">C3 AdBlocker</span></h1>
-  <p class="sub">A network-wide DNS ad-blocker on a <span class="price">$2</span> ESP32-C3 — 141,000+ domains, no PSRAM. Flash it right here, no toolchain needed.</p>
+
+  <div class="langs">
+    <button class="lang-btn on" id="btn-en" onclick="setLang('en')">English</button>
+    <button class="lang-btn" id="btn-ru" onclick="setLang('ru')">Русский</button>
+  </div>
 
   <div class="card" style="text-align:center">
-    <p style="margin-top:0">Plug your ESP32-C3 into this computer, then:</p>
+    <p class="sub" style="margin:0 0 12px" id="sub-en">A network-wide DNS ad-blocker on a <span class="price">$2</span> ESP32-C3 — 266,000+ domains, no PSRAM. Flash it right here, no toolchain needed.</p>
+    <p class="sub" style="margin:0 0 12px; display:none" id="sub-ru">Сетевой DNS-блокировщик рекламы на <span class="price">$2</span> ESP32-C3 — 266 000+ доменов, без PSRAM. Прошивается прямо отсюда, без установки программ.</p>
+    <p style="margin:0 0 6px" id="step-en">Plug your ESP32-C3 into this computer, then:</p>
+    <p style="margin:0 0 6px; display:none" id="step-ru">Подключите ESP32-C3 к этому компьютеру, затем:</p>
     <esp-web-install-button manifest="./manifest.json">
       <button slot="activate" style="font:600 17px system-ui;padding:14px 26px;border:0;border-radius:8px;background:#3fb950;color:#000;cursor:pointer">⚡ Connect &amp; Install</button>
       <span slot="unsupported" class="unsupported">Your browser can't flash — use <b>Chrome</b> or <b>Edge</b> on a desktop.</span>
-      <span slot="not-allowed" class="unsupported">You need to allow the serial port.</span>
+      <span slot="not-allowed" class="unsupported">Your browser needs serial-port permission.</span>
     </esp-web-install-button>
     <div class="flags">
       <span class="flag">Chrome / Edge · desktop</span>
-      <span class="flag">~30 seconds</span>
-      <span class="flag">blocklist included</span>
+      <span class="flag" id="f-en">~30 seconds</span>
+      <span class="flag" id="f-ru" style="display:none">~30 секунд</span>
+      <span class="flag" id="f-en2">266k blocklist, RU included</span>
+      <span class="flag" id="f-ru2" style="display:none">список 266k + RU</span>
     </div>
   </div>
 
-  <div class="card">
-    <b>What happens</b>
-    <ol>
-      <li>Click <b>Connect &amp; Install</b> and pick your ESP32-C3's serial port.</li>
-      <li>It flashes the firmware + a 141k-domain blocklist (~30s).</li>
-      <li>After it reboots, it makes a WiFi network called <code>C3-AdBlock-XXXX</code> — join it from your phone, pick your WiFi, type the password.</li>
-      <li>Set it as your router's secondary DNS (or per-device), and ads are blocked network-wide. Dashboard at <code>c3adblock.local</code>.</li>
-    </ol>
-    <p class="note">No WiFi credentials are baked into this build — you set them on-device, privately.</p>
+  <div class="lang on" id="lang-en">
+    <div class="card">
+      <b>What happens</b>
+      <ol>
+        <li>Click <b>Connect &amp; Install</b> and pick your ESP32-C3's serial port.</li>
+        <li>It flashes the firmware + a 266k-domain blocklist (~30s).</li>
+        <li>After it reboots, it makes a WiFi network called <code>C3-AdBlock-XXXX</code> — join it from your phone, pick your WiFi, type the password.</li>
+        <li>Set it as your router's secondary DNS (or per-device), and ads are blocked network-wide. Dashboard at <code>c3adblock.local</code>.</li>
+        <li>The blocklist updates by itself every day through GitHub Actions — nothing to do.</li>
+      </ol>
+      <p class="note">No WiFi credentials are baked into this build — you set them on-device, privately. RU ad networks (Yandex.Direct, AdFox, VK Ads, MyTarget) are covered out of the box.</p>
+    </div>
   </div>
 
-  <p class="note">
-    📰 Featured on <a href="https://www.tomshardware.com/networking/clever-hacker-fits-537-000-domains-in-a-tiny-usd5-esp32-ad-blocking-dongle-firmware-uses-only-around-50kb-of-ram-and-can-answer-blocked-lookups-in-10-milliseconds">Tom's Hardware</a>,
-    <a href="https://www.xda-developers.com/this-tiny-esp32-powered-gadget-blocks-537000-domains-only-uses-50kb-of-ram/">XDA</a>, and
-    <a href="https://korben.info/en/half-million-ad-blocking-domains-50kb-ram-esp32.html">Korben</a>.
-    &nbsp;·&nbsp; Source + docs: <a href="https://github.com/hybhyyb/esp32-c3-adblock">GitHub</a> (MIT).
-  </p>
+  <div class="lang" id="lang-ru">
+    <div class="card">
+      <b>Что произойдёт</b>
+      <ol>
+        <li>Нажмите <b>Connect &amp; Install</b> и выберите COM-порт вашего ESP32-C3.</li>
+        <li>Прошьётся прошивка + блок-лист на 266k доменов (~30 секунд).</li>
+        <li>После перезагрузки появится сеть Wi-Fi <code>C3-AdBlock-XXXX</code> — подключитесь с телефона, выберите свою сеть, введите пароль.</li>
+        <li>Укажите плату вторичным DNS на роутере (или на отдельных устройствах) — и реклама блокируется по всей сети. Дашборд: <code>c3adblock.local</code>.</li>
+        <li>Список обновляется сам каждый день через GitHub Actions — ничего делать не нужно.</li>
+      </ol>
+      <p class="note">Пароли Wi-Fi в прошивку не зашиты — задаются на устройстве, приватно. Российские рекламные сети (Яндекс.Директ, AdFox, VK Ads, MyTarget) покрыты из коробки.</p>
+    </div>
+  </div>
+
+  <p class="note" id="note-en">📰 Featured on <a href="https://www.tomshardware.com/networking/clever-hacker-fits-537-000-domains-in-a-tiny-usd5-esp32-ad-blocking-dongle-firmware-uses-only-around-50kb-of-ram-and-can-answer-blocked-lookups-in-10-milliseconds">Tom's Hardware</a>, <a href="https://www.xda-developers.com/this-tiny-esp32-powered-gadget-blocks-537000-domains-only-uses-50kb-of-ram/">XDA</a>, and <a href="https://korben.info/en/half-million-ad-blocking-domains-50kb-ram-esp32.html">Korben</a>. &nbsp;·&nbsp; Source + docs: <a href="https://github.com/hybhyyb/esp32-c3-adblock">GitHub</a> (MIT).</p>
+  <p class="note" id="note-ru" style="display:none">📰 О проекте писали <a href="https://www.tomshardware.com/networking/clever-hacker-fits-537-000-domains-in-a-tiny-usd5-esp32-ad-blocking-dongle-firmware-uses-only-around-50kb-of-ram-and-can-answer-blocked-lookups-in-10-milliseconds">Tom's Hardware</a>, <a href="https://www.xda-developers.com/this-tiny-esp32-powered-gadget-blocks-537000-domains-only-uses-50kb-of-ram/">XDA</a> и <a href="https://korben.info/en/half-million-ad-blocking-domains-50kb-ram-esp32.html">Korben</a>. &nbsp;·&nbsp; Исходники и документация: <a href="https://github.com/hybhyyb/esp32-c3-adblock">GitHub</a> (MIT).</p>
 </div>
+<script>
+function setLang(l){
+  document.querySelectorAll('.lang').forEach(function(e){ e.classList.toggle('on', e.id === 'lang-'+l); });
+  document.querySelectorAll('.lang-btn').forEach(function(e){ e.classList.toggle('on', e.id === 'btn-'+l); });
+  ['sub','step','f','note'].forEach(function(k){
+    var en = document.getElementById(k + '-en'), ru = document.getElementById(k + '-ru');
+    if (en) en.style.display = l === 'en' ? '' : 'none';
+    if (ru) ru.style.display = l === 'ru' ? '' : 'none';
+  });
+  try { localStorage.setItem('c3adblock-lang', l); } catch (e) {}
+}
+setLang((function(){ try { return localStorage.getItem('c3adblock-lang'); } catch (e) { return null; } })() === 'ru' ? 'ru' : 'en');
+</script>
 </body>
 </html>
