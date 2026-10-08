@@ -990,6 +990,11 @@ void setup() {
 
   if (!connectWiFi()) startConfigPortal();   // portal blocks + reboots on save; returns only when connected
   Serial.printf("WiFi up: %s\n", WiFi.localIP().toString().c_str());
+  // Point our own outbound resolver away from the router: once the router hands
+  // the whole LAN (incl. us) 192.168.1.85 as DNS, the board's own lwip lookups
+  // would loop back through the router (board -> router -> board -> ...). Public
+  // resolvers keep remote auto-update and NTP working in that configuration.
+  WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, IPAddress(8, 8, 8, 8), IPAddress(1, 1, 1, 1));
   applyTz();
   configTime(0, 0, "pool.ntp.org", "time.google.com", "ru.pool.ntp.org");
   for (int i = 0; i < 100 && ymdNow() == 0; i++) delay(100);   // up to 10 s for first sync (non-fatal)
