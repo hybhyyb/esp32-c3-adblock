@@ -116,7 +116,7 @@ blockActive:'Blocking active',blockPauseIn:'Paused — resumes in {n} s',blockPa
 cBlocked:'Blocked',cAllowed:'Allowed',cDomains:'Domains in list',cClients:'Clients',cSignal:'Signal',cTemp:'Temperature',cHeap:'RAM free',cUptime:'Uptime',rssiUnit:' dBm',tempUnit:' °C',ramUnit:' KB',
 banned:'BANNED',banBtn:'Ban',unbanBtn:'Unban',rmBtn:'delete',custEmpty:'none yet',allowEmpty:'none — the whole list is active',
 qBlocked:'blocked',qPassed:'passed',qEmpty:'none yet',sAgo:'s ago',qdayBody:'today: {b} blocked / {a} allowed · yesterday: {b2} / {a2}',
-lastUpd:'list updated',lastUpdNever:'never',
+lastUpd:'list updated',lastUpdNever:'never',lastUpdMsk:' (MSK)',
 updLoading:'downloading…',flashUp:'flashing {mb} MB…',flashOk:'✓ rebooting, reconnect in ~15 s',flashErrPre:'✗ ',upMsgUpload:'uploading {mb} MB…',upOk:'✓ updated',upErr:'✗ upload error',restMsg:'restoring…'
 },ru:{
 tabOverview:'📊 Обзор',tabLog:'📜 Журнал',tabClients:'👥 Клиенты',tabLists:'🚫 Списки',tabSettings:'⚙️ Настройки',
@@ -136,7 +136,7 @@ blockActive:'Блокировка активна',blockPauseIn:'Пауза — �
 cBlocked:'Заблокировано',cAllowed:'Пропущено',cDomains:'Доменов в списке',cClients:'Клиентов',cSignal:'Сигнал',cTemp:'Температура',cHeap:'RAM свободно',cUptime:'Аптайм',rssiUnit:' дБм',tempUnit:' °C',ramUnit:' КБ',
 banned:'ЗАБАНЕН',banBtn:'Забанить',unbanBtn:'Разбанить',rmBtn:'удалить',custEmpty:'пока нет',allowEmpty:'нет — активен весь список',
 qBlocked:'заблокирован',qPassed:'пропущен',qEmpty:'пока нет',sAgo:'с назад',qdayBody:'сегодня: {b} заблокировано / {a} пропущено · вчера: {b2} / {a2}',
-lastUpd:'список обновлён',lastUpdNever:'ещё не обновлялся',
+lastUpd:'список обновлён',lastUpdNever:'ещё не обновлялся',lastUpdMsk:' (МСК)',
 updLoading:'загружаю…',flashUp:'прошиваю {mb} МБ…',flashOk:'✓ перезагрузка, подключитесь через ~15 с',flashErrPre:'✗ ',upMsgUpload:'загружаю {mb} МБ…',upOk:'✓ обновлено',upErr:'✗ ошибка загрузки',restMsg:'восстанавливаю…'
 }};
 let l='ru';try{l=localStorage.getItem('c3adblock-lang')||'ru'}catch(e){}
@@ -163,7 +163,7 @@ let on=s.blocking!==false;blockstate.dataset.on=on?'1':'0';
 blockdot.textContent=on?'🛡️':'⏸️';blockbar.style.borderColor=on?'#30363d':'#f0883e';
 blockstate.textContent=on?t('blockActive'):(s.resumeIn>0?t('blockPauseIn').replace('{n}',s.resumeIn):t('blockPause'));
 pausebtn.textContent=on?t('pauseBtn'):t('resumeBtn');pausedur.style.display=on?'':'none';
-function updDateStr(ts){if(!ts)return t('lastUpdNever');return t('lastUpd')+': '+new Date(ts*1000).toLocaleString(l==='ru'?'ru-RU':'en-US',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});}
+function updDateStr(ts){if(!ts)return t('lastUpdNever');return t('lastUpd')+': '+new Date(ts*1000).toLocaleString(l==='ru'?'ru-RU':'en-US',{timeZone:'Europe/Moscow',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})+t('lastUpdMsk');}
 let lastUpd=updDateStr(s.uplast);
 upfull.textContent=lastUpd;
 const cvs=[[t('cBlocked'),fmt(s.blocked),'b',''],[t('cAllowed'),fmt(s.allowed),'a',''],
