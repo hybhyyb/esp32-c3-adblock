@@ -59,6 +59,7 @@ form{margin-bottom:6px}
 <div class=card style="flex:2;min-width:320px"><div class=l data-i=hTraffic>ЗАПРОСЫ DNS — ПОСЛЕДНИЕ 24 Ч</div>
 <div style="position:relative;margin-top:6px"><svg id=spark viewBox="0 0 340 80" preserveAspectRatio="none" style="width:100%;height:80px;display:block"></svg><div id=sparkhint style="pointer-events:none"></div></div></div>
 </div>
+<div class=cards><div class=card style="min-width:280px"><div class=l data-i=hTop>ТОП ЗАБЛОКИРОВАННЫХ СЕГОДНЯ</div><div id=topl style="margin-top:6px"></div></div></div>
 </section>
 
 <section class=sec id=sec-log>
@@ -113,6 +114,7 @@ thClient:'Client',thMac:'MAC',thBlk:'Blocked',thAllowCnt:'Allowed',thDomain:'Dom
 qfAll:'all queries',qfBlocked:'blocked only',qfAllowed:'allowed only',
 qsearchPh:'domain / IP…',csearchPh:'filter custom…',asearchPh:'filter allowed…',
 hFlash:'FLASH STORAGE',hTraffic:'DNS QUERIES — LAST 24 H',sparkHint:'green — total · red — blocked',noisy:'NOISY',
+hTop:'TOP BLOCKED TODAY',topEmpty:'no blocked queries yet',
 fsBody:'list {l} MB · used {u} · free {f} of {t} MB',
 qNote:'last 128 queries; the board decides: blocked (red) or passed to router (green)',
 addDomBtn:'Block domain',domPh:'my-example.net',addAllowBtn:'Allow domain',adomPh:'youtube.com',allowNote:'take priority over the list and survive any blocklist replacement — e.g. <code>youtube.com</code> comes back from any update',
@@ -136,6 +138,7 @@ thClient:'Клиент',thMac:'MAC',thBlk:'Заблокир.',thAllowCnt:'Про
 qfAll:'все запросы',qfBlocked:'только заблокированные',qfAllowed:'только пропущенные',
 qsearchPh:'домен / IP…',csearchPh:'фильтр своих…',asearchPh:'фильтр разрешённых…',
 hFlash:'ФЛЕШ-ХРАНИЛИЩЕ',hTraffic:'ЗАПРОСЫ DNS — 24 Ч',sparkHint:'зелёный — всего · красный — заблокировано',noisy:'ШУМНЫЙ',
+hTop:'ТОП ЗАБЛОКИРОВАННЫХ СЕГОДНЯ',topEmpty:'пока не было блокировок',
 fsBody:'список {l} МБ · занято {u} · свободно {f} из {t} МБ',
 qNote:'последние 128 запросов, решает плата: заблокирован (красный) или пропущен в роутер (зелёный)',
 addDomBtn:'Заблокировать домен',domPh:'мой-пример.net',addAllowBtn:'Разрешить домен',adomPh:'youtube.com',allowNote:'имеют приоритет над списком и сохраняются при любой замене блэклиста — например, <code>youtube.com</code> вернётся из любого обновления',
@@ -152,7 +155,7 @@ qBlocked:'заблокирован',qPassed:'пропущен',qEmpty:'пока 
 lastUpd:'список обновлён',lastUpdNever:'ещё не обновлялся',lastUpdMsk:' (МСК)',
 updLoading:'загружаю…',flashUp:'прошиваю {mb} МБ…',flashOk:'✓ перезагрузка, подключитесь через ~15 с',flashErrPre:'✗ ',upMsgUpload:'загружаю {mb} МБ…',upOk:'✓ обновлено',upErr:'✗ ошибка загрузки',restMsg:'восстанавливаю…'
 }};
-let l='ru';try{l=localStorage.getItem('c3adblock-lang')||'ru'}catch(e){}
+let l='ru';try{l=localStorage.getItem('c3adblock-lang')||'ru'}catch(e){};let ql=new URLSearchParams(location.search).get('lang');if(ql==='en'||ql==='ru')l=ql;
 function t(k){return (I[l]&&I[l][k])||k}
 function setLang(nl){l=nl;try{localStorage.setItem('c3adblock-lang',l)}catch(e){}
 document.querySelectorAll('[data-i]').forEach(el=>el.textContent=t(el.dataset.i));
@@ -234,5 +237,7 @@ let fd=new FormData();fd.append('f',f);
 try{let r=await fetch('/restore',{method:'POST',headers:CSRF_HDRS,body:fd});rsmsg.textContent=await r.text();}
 catch(_){rsmsg.textContent='✗';}
 rsfile.value='';setTimeout(load,600);};
-setLang(l);setInterval(load,3000);loadHour();setInterval(loadHour,60000);
+async function loadTop(){try{let d=await(await fetch('/topd.json')).json();if(!d.t.length){topl.textContent=t('topEmpty');return;}
+topl.innerHTML=d.t.map((x,i)=>`<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid #21262d;font-size:13px;align-items:baseline"><span style="color:#8b949e;min-width:22px">${i+1}</span><span style="flex:1;overflow-wrap:anywhere">${esc(x.d)}</span><span class=b>${fmt(x.n)}</span></div>`).join('');}catch(_){}}
+setLang(l);setInterval(load,3000);loadHour();setInterval(loadHour,60000);loadTop();setInterval(loadTop,60000);
 </script></body></html>)HTML";

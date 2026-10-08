@@ -195,6 +195,30 @@ static void autoBanTick() {
 static const int MAX_BAN = 32;
 uint32_t bannedIP[MAX_BAN]; int numBanned = 0;
 
+// Top blocklist hits of the day: Space-Saving style summary with bounded RAM —
+// K=32 slots hold (40-bit blocklist hash, count, display name). On an unknown
+// domain we either insert (free slot) or bump-and-reassign the smallest count.
+// Near-exact for frequent domains, error <= total/K for the tail. Reset on the
+// daily rollover; reboot loses it (same as the hourly ring).
+struct TopEnt { uint64_t h; uint32_t n, last; char dom[48]; };
+static const int TOP_K = 32, TOP_SHOW = 10;
+static TopEnt top[TOP_K];
+static uint64_t fnv40(const char* s, size_t n);
+static void topAdd(const char* dom) {
+  size_t n = strlen(dom); uint64_t h = fnv40(dom, n);
+  TopEnt* min = &top[0]; uint32_t minN = 0xFFFFFFFF; int freeSlot = -1; bool hit = false;
+  for (int i = 0; i < TOP_K; i++) {
+    TopEnt& e = top[i];
+    if (!e.n && freeSlot < 0) freeSlot = i;
+    if (e.h == h && e.n) { e.n++; e.last = millis(); hit = true; break; }
+    if (e.n && e.n < minN) { minN = e.n; min = &e; }
+  }
+  if (hit) return;
+  TopEnt& e = (freeSlot >= 0) ? top[freeSlot] : *min;
+  e.h = h; e.n = (freeSlot >= 0) ? 1 : minN + 1; e.last = millis();
+  strncpy(e.dom, dom, sizeof(e.dom) - 1); e.dom[sizeof(e.dom) - 1] = 0;
+}
+
 // remote blocklist auto-update
 String updateUrl = "";              // URL of a prebuilt blocklist.bin (e.g. GitHub release asset)
 uint32_t updateIntervalH = 24;      // hours between auto-fetches
@@ -526,7 +550,7 @@ static bool handleDns() {
     bool blocked = ban || (blockingOn && dl && numHashes && isBlocked(domain));
     if (dl) qlogAdd(domain, (uint32_t)cip, blocked);
     int rlen;
-    if (blocked) { rlen = buildBlocked(qend, qtype); totalBlocked++; blkToday++; hourCount(true); if (c) c->blocked++; }
+    if (blocked) { rlen = buildBlocked(qend, qtype); totalBlocked++; blkToday++; hourCount(true); if (dl) topAdd(domain); if (c) c->blocked++; }
     else         { totalAllowed++; alwToday++; hourCount(false); if (c) c->allowed++; fwdStart(qlen, qend, cip, cport); rlen = 0; }
     if (rlen > 0) sendReply(cip, cport, rlen);
   }
@@ -1073,6 +1097,15 @@ void setup() {
     j += "],\"last\":" + String(hHour) + "}";
     web.send(200, "application/json", j);
   });
+  web.on("/topd.json", []() {                       // top blocked domains today (Space-Saving snapshot)
+    TopEnt srt[TOP_K]; int ns = 0;
+    for (int i = 0; i < TOP_K; i++) if (top[i].n) srt[ns++] = top[i];
+    for (int a = 0; a < ns; a++) for (int b = a + 1; b < ns; b++) if (srt[b].n > srt[a].n) { TopEnt t = srt[a]; srt[a] = srt[b]; srt[b] = t; }
+    String j = "{\"t\":[";
+    for (int i = 0; i < ns && i < TOP_SHOW; i++) { j += (i ? "," : ""); j += "{\"d\":\"" + jesc(String(srt[i].dom)) + "\",\"n\":" + String(srt[i].n) + "}"; }
+    j += "]}";
+    web.send(200, "application/json", j);
+  });
   web.on("/ban", handleBan);
   web.on("/addblock", []() { if (!requireAuth()) return; addCustom(web.arg("d")); web.send(200, "text/plain", "ok"); });
   web.on("/unblock", []() { if (!requireAuth()) return; removeCustom(web.arg("d")); web.send(200, "text/plain", "ok"); });
@@ -1135,7 +1168,7 @@ void loop() {
   if (lnow - lt0 > 1200) Serial.printf("[loop] stall %u ms rssi=%d heap=%u\n", lnow - lt0, WiFi.RSSI(), (unsigned)ESP.getFreeHeap());
   lt0 = lnow;
   static uint32_t lday = 0;
-  if (lnow - lday > 5000) { lday = lnow; dailyRoll(); statsFlush(false); }
+  if (lnow - lday > 5000) { lday = lnow; uint32_t dPrev = dayToday; dailyRoll(); statsFlush(false); if (dayToday != dPrev) { for (int i = 0; i < TOP_K; i++) top[i].n = 0; Serial.println("[top] day rolled - counters reset"); } }
   static uint32_t lhr = 0;
   if (lnow - lhr > 1000) { lhr = lnow; hourRoll(); autoBanTick(); }
   static uint32_t lr = 0;

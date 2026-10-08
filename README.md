@@ -191,6 +191,22 @@ is still open (unencrypted) by design — it needs to be joinable without knowin
 a password first. The real WiFi password you type into the portal is only as
 safe as that local radio link during the brief setup window.
 
+## Dashboard
+
+![Dashboard (Russian, default UI language)](docs/screens/dashboard-ru.png)
+
+Bilingual web UI (RU/EN, switch in the header, persisted in the browser). Tabs:
+Overview (stat cards, flash-storage bar, 24 h query sparkline, top blocked
+domains of the day), DNS log (searchable), Clients (live counters, manual ban,
+noisy-client badge), Lists (custom/allow filters), Settings (pause, allowed
+domains, blocklist auto-update, backup/restore, OTA). English variant:
+
+![Dashboard (English)](docs/screens/dashboard-en.png)
+
+Read-only JSON endpoints for external monitoring: `/stats.json`, `/health`
+(Uptime Kuma / Home Assistant), `/hourly` (24 h sparkline data), `/topd.json`
+(top blocked today).
+
 ## Network topology
 
 ```
