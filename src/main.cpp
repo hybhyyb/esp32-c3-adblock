@@ -98,6 +98,17 @@ static uint8_t cacheKey[CACHE_SIZE][HASH_BYTES];
 static uint8_t cacheRes[CACHE_SIZE];
 static uint8_t cacheValid[CACHE_SIZE];
 static uint8_t rangeBuf[MAX_RANGE * HASH_BYTES];
+// A failed seek/read of the blocklist file must never be silent: upstream
+// firmware ignored it, and a single transient LittleFS hiccup turned the whole
+// list into "everything allowed" until the next reboot (observed in the field:
+// sites kept resolving, nothing in the log). Reads are now checked; a failure
+// flags the list dirty and loop() re-opens + reindexes it. A 60 s probe reads a
+// hash that is guaranteed to be in the file and verifies the index finds it,
+// so a silently dead list is detected and repaired even without a failed read.
+static bool     blDirty = false;
+static uint32_t fsReadFail = 0, fsHealN = 0, blProbeFail = 0;
+static bool     fsOk = true;             // last probe result, shown on the dashboard
+static uint32_t wifiReconnects = 0, wifiDownAt = 0, lastStallMs = 0;
 
 struct Dev { uint32_t ip; uint8_t mac[6]; uint32_t blocked, allowed, lastSeen; bool banned; String label;
              uint32_t secTs, secN, autoUntil; uint8_t noisy; };
@@ -148,9 +159,14 @@ static void dailyRoll() {
   dayToday = d; blkToday = 0; alwToday = 0;
 }
 static void statsFlush(bool force) {
+  static uint32_t fDay = 0, fBlk = 0, fAlw = 0;
   uint32_t now = millis();
-  if (!force && now - lastStatFlush < 300000) return;   // 5 min — NVS write wear
+  if (!force && now - lastStatFlush < 900000) return;             // 15 min — NVS write wear
+  // Skip the write entirely when nothing changed: an idle board used to burn a
+  // flash erase cycle every 5 minutes for no reason.
+  if (!force && dayToday == fDay && blkToday == fBlk && alwToday == fAlw) return;
   lastStatFlush = now;
+  fDay = dayToday; fBlk = blkToday; fAlw = alwToday;
   prefs.begin("stats", false);
   prefs.putUInt("day", dayToday); prefs.putUInt("blk", blkToday); prefs.putUInt("alw", alwToday);
   prefs.putUInt("yday", dayYest); prefs.putUInt("yblk", blkYest); prefs.putUInt("yalw", alwYest);
@@ -222,7 +238,8 @@ static void topAdd(const char* dom) {
 // remote blocklist auto-update
 String updateUrl = "";              // URL of a prebuilt blocklist.bin (e.g. GitHub release asset)
 uint32_t updateIntervalH = 24;      // hours between auto-fetches
-uint32_t lastCheckMs = 0;
+uint32_t nextUpTryMs = 0;           // retry gate after a failed fetch (millis)
+static bool fetchNowReq = false;    // /fetchnow sets this; loop() runs the fetch so the web server stays live
 String updateStatus = "never";
 uint32_t lastUpdEpoch = 0;          // NTP epoch of last OK list swap, 0 if none
 
@@ -251,12 +268,21 @@ static inline void packHash(uint64_t h, uint8_t* b) {
 
 static void buildFlashIndex() {
   if (!blocklist || numHashes == 0) return;
+  uint32_t bad = 0;
   for (int i = 0; i < INDEX_ENTRIES; i++) {
     uint32_t pos = (uint32_t)((uint64_t)i * (numHashes - 1) / (INDEX_ENTRIES - 1));
-    blocklist.seek((uint32_t)pos * HASH_BYTES);
-    blocklist.read(blIndex[i], HASH_BYTES);
+    if (!blocklist.seek((uint32_t)pos * HASH_BYTES) ||
+        blocklist.read(blIndex[i], HASH_BYTES) != HASH_BYTES) {
+      memset(blIndex[i], 0, HASH_BYTES);
+      bad++;
+    }
   }
   for (int i = 0; i < CACHE_SIZE; i++) cacheValid[i] = 0;
+  if (bad) {
+    fsReadFail += bad;
+    blDirty = true;
+    Serial.printf("[bl] index: %u of %d samples unreadable — will retry\n", (unsigned)bad, INDEX_ENTRIES);
+  }
 }
 
 static bool inFlash(uint64_t h) {
@@ -285,8 +311,11 @@ static bool inFlash(uint64_t h) {
   uint32_t rangeCount = endPos - startPos + 1;
   if (rangeCount > (uint32_t)MAX_RANGE) rangeCount = MAX_RANGE;
 
-  blocklist.seek((uint32_t)startPos * HASH_BYTES);
-  blocklist.read(rangeBuf, (uint32_t)rangeCount * HASH_BYTES);
+  const size_t want = (size_t)rangeCount * HASH_BYTES;
+  if (!blocklist.seek((uint32_t)startPos * HASH_BYTES) || blocklist.read(rangeBuf, want) != want) {
+    fsReadFail++; blDirty = true;
+    return false;                     // fail open, but the list is reindexed within 60 s
+  }
 
   for (uint32_t i = 0; i < rangeCount; i++) {
     uint64_t v = unpackHash(rangeBuf + i * HASH_BYTES);
@@ -294,6 +323,42 @@ static bool inFlash(uint64_t h) {
     if (v > h) break;
   }
   return false;
+}
+
+static void reopenBlocklist();          // defined with the blocklist-swap code
+// End-to-end sanity check: the first hash in the file must be found by the
+// index+file lookup. A zeroed/stale index (or a file the FS can no longer read)
+// makes this fail, which is exactly the "blocking quietly died" state.
+static bool blProbeOk() {
+  if (!blocklist || numHashes == 0) return true;   // nothing to verify
+  uint8_t b[HASH_BYTES];
+  if (!blocklist.seek(0) || blocklist.read(b, HASH_BYTES) != HASH_BYTES) return false;
+  return inFlash(unpackHash(b));
+}
+static void blHeal() {
+  if (!blDirty) return;
+  if (!blocklist || numHashes == 0) { blDirty = false; return; }
+  blDirty = false; fsHealN++;
+  Serial.printf("[bl] reindex (read failures=%u, probe fails=%u)\n", (unsigned)fsReadFail, (unsigned)blProbeFail);
+  if (blocklist) blocklist.close();
+  reopenBlocklist();
+}
+static void blMaintain() {
+  static uint32_t last = 0;
+  uint32_t now = millis();
+  if (now - last < 60000) return;
+  last = now;
+  blHeal();
+  if (!blocklist || numHashes == 0) { fsOk = true; return; }
+  bool ok = blProbeOk();
+  if (!ok) {
+    blProbeFail++;
+    blDirty = true;
+    blHeal();
+    ok = blProbeOk();
+    Serial.printf("[bl] probe -> %s\n", ok ? "ok after reindex" : "STILL BAD (fs?)");
+  }
+  fsOk = ok;
 }
 
 static bool inCustom(uint64_t h) { for (int i = 0; i < numCustom; i++) if (customHash[i] == h) return true; return false; }
@@ -421,6 +486,7 @@ static int buildBlocked(int qend, uint16_t qtype) {
   buf[2] = 0x81; buf[3] = 0x80; buf[6] = 0; buf[7] = (qtype == 1) ? 1 : 0; buf[8] = 0; buf[9] = 0; buf[10] = 0; buf[11] = 0;
   if (qtype != 1) return qend;
   const uint8_t ans[] = {0xC0,0x0C, 0,1, 0,1, 0,0,1,0x2C, 0,4, 0,0,0,0};
+  if (qend < 12 || qend + (int)sizeof(ans) > (int)sizeof(buf)) return 0;   // never write past buf
   memcpy(buf + qend, ans, sizeof(ans)); return qend + sizeof(ans);
 }
 // Send a datagram; on transient ENOMEM stage it for txDrain() instead of
@@ -589,7 +655,10 @@ const char FAV_SVG[] PROGMEM = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBo
 static void handleStats() {
   uint32_t up = millis() / 1000;
   char ut[24]; snprintf(ut, sizeof(ut), "%lud %luh %lum", up/86400, (up%86400)/3600, (up%3600)/60);
-  String j = "{\"ip\":\"" + WiFi.localIP().toString() + "\",\"blocked\":" + totalBlocked + ",\"allowed\":" + totalAllowed +
+  // This is polled every 3 s by an open dashboard: reserve once instead of
+  // letting dozens of small += reallocate the buffer (heap churn/fragmentation).
+  String j; j.reserve(384 + numClients * 110 + (numCustom + numAllow) * 32);
+  j = "{\"ip\":\"" + WiFi.localIP().toString() + "\",\"blocked\":" + totalBlocked + ",\"allowed\":" + totalAllowed +
              ",\"domains\":" + numHashes + ",\"rssi\":" + WiFi.RSSI() + ",\"temp\":" + String(temperatureRead(), 1) +
              ",\"heap\":" + ESP.getFreeHeap() + ",\"uptime\":\"" + ut + "\"" +
              ",\"upurl\":\"" + jesc(updateUrl) + "\",\"upiv\":" + updateIntervalH + ",\"upstat\":\"" + jesc(updateStatus) +
@@ -603,6 +672,9 @@ static void handleStats() {
              ",\"blocking\":" + (blockingOn ? "true" : "false") +
              ",\"resumeIn\":" + (uint32_t)(!blockingOn && resumeAt ? (resumeAt - millis()) / 1000 : 0) +
              ",\"defcreds\":" + ((strcmp(WEB_PASS, "CHANGE_ME_WEB_PASSWORD") == 0 || strcmp(OTA_PASS, "CHANGE_ME_OTA_PASSWORD") == 0) ? "true" : "false") +
+             ",\"fsok\":" + (fsOk ? "true" : "false") + ",\"fsrf\":" + fsReadFail + ",\"fsh\":" + fsHealN +
+             ",\"wifi\":" + (WiFi.status() == WL_CONNECTED ? "true" : "false") + ",\"rc\":" + wifiReconnects +
+             ",\"hmin\":" + ESP.getMinFreeHeap() +
              ",\"clients\":[";
   for (int i = 0; i < numClients; i++) { Dev& c = clients[i]; IPAddress ip(c.ip);
     j += (i ? "," : ""); j += "{\"ip\":\"" + ip.toString() + "\",\"mac\":\"" + macStr(c.mac) + "\",\"blocked\":" + c.blocked + ",\"allowed\":" + c.allowed + ",\"banned\":" + (c.banned?"true":"false") + ",\"qps\":" + c.secN + ",\"noisy\":" + (c.noisy?"true":"false") + "}"; }
@@ -868,6 +940,7 @@ static void saveUpdateCfg() {
 static bool fetchBlocklist(String url) {
   url.trim(); if (!url.length()) { updateStatus = "no url set"; return false; }
   Serial.printf("[remote] GET %s\n", url.c_str());
+  uint32_t t0 = millis();
   WiFiClientSecure cs; cs.setInsecure();            // blocklist isn't secret -> skip cert pinning
   WiFiClient cl;
   HTTPClient http; http.setTimeout(20000);
@@ -882,21 +955,53 @@ static bool fetchBlocklist(String url) {
   int len = http.getSize();
   size_t freeNow = LittleFS.totalBytes() - LittleFS.usedBytes();
   if (len > 0 && (size_t)len + 65536 > freeNow) {   // 64 KB margin = LittleFS metadata/CTZ overhead
-    http.end();
-    updateStatus = "no space: need " + String(len / 1024) + " KB, have " + String((unsigned long)(freeNow / 1024)) + " KB";
-    Serial.printf("[remote] %s\n", updateStatus.c_str());
-    return false;
+    // The safe path writes the new list next to the live one, so it needs ~2x the
+    // list size. A list that has grown past half the filesystem would otherwise
+    // never update again ("no space" forever). Fall back to replacing in place:
+    // truncate the live file first (blocking pauses until the commit, forwarding
+    // keeps working) and write the new list into the freed space. Refuse only if
+    // even that cannot fit.
+    size_t liveSz = blocklist ? blocklist.size() : 0;
+    if ((size_t)len + 65536 <= freeNow + liveSz) {
+      Serial.printf("[remote] low space: truncating live list (%u B) for a %d B update\n", (unsigned)liveSz, len);
+      if (blocklist) blocklist.close();
+      numHashes = 0;
+      { File t = LittleFS.open(BLOCKLIST_PATH, "w"); if (t) t.close(); }   // free the space
+    } else {
+      http.end();
+      updateStatus = "no space: need " + String(len / 1024) + " KB, have " + String((unsigned long)(freeNow / 1024)) + " KB";
+      Serial.printf("[remote] %s\n", updateStatus.c_str());
+      return false;
+    }
   }
-  LittleFS.remove("/blocklist.new");
+  if (LittleFS.exists("/blocklist.new")) LittleFS.remove("/blocklist.new");
   File f = LittleFS.open("/blocklist.new", "w");
   if (!f) { http.end(); updateStatus = "fs open failed"; return false; }
   WiFiClient* stream = http.getStreamPtr();
   uint8_t b[1024]; size_t total = 0; uint32_t idle = millis(); bool wrFail = false;
+  uint32_t pump = millis(), tLog = millis();
   while (http.connected() && (len < 0 || (int)total < len)) {
     esp_task_wdt_reset();                        // download can outlive the WDT window on a slow link
+    // Keep the device usable while a 1.4 MB pull runs: without pumping, the
+    // loop task stalled for minutes (observed: 277 s) and every DNS query and
+    // dashboard request in that window timed out. Called from loop(), so
+    // re-entering the web server here is safe.
+    if (millis() - pump >= 100) {
+      pump = millis();
+      handleDns(); fwdPoll(); txDrain(); web.handleClient();
+    }
+    if (millis() - tLog >= 5000) {
+      tLog = millis();
+      Serial.printf("[remote] %u/%d KB, %u KB/s\n", (unsigned)(total / 1024), len / 1024,
+                    (unsigned)(total / 1024 * 1000 / (millis() - t0 + 1)));
+    }
     size_t availN = stream->available();
     if (availN) {
-      int n = stream->readBytes(b, availN > sizeof(b) ? sizeof(b) : availN);
+      // read(), not readBytes(): readBytes() blocks until the full length is
+      // buffered or the 1 s stream timeout fires, which made a TLS list pull run
+      // at ~2 KB/s (one timeout per chunk). read() returns what mbedTLS already
+      // decrypted and the outer loop drains the rest.
+      int n = stream->read(b, availN > sizeof(b) ? sizeof(b) : availN);
       if (n > 0) { if (f.write(b, n) != (size_t)n) { wrFail = true; break; } total += n; idle = millis(); }
     }
     else { if (millis() - idle > 15000) break; delay(2); }
@@ -909,7 +1014,36 @@ static bool fetchBlocklist(String url) {
                     : (wrFail ? "write failed (out of flash?) — live list untouched"
                               : "bad data — live list untouched");
   Serial.printf("[remote] %s\n", updateStatus.c_str());
+  // Persist the outcome so the dashboard shows it after a reboot instead of "never".
+  static String lastPersisted;
+  if (updateStatus != lastPersisted) {
+    lastPersisted = updateStatus;
+    prefs.begin("stats", false); prefs.putString("upst", updateStatus); prefs.end();
+  }
   return ok;
+}
+
+// Auto-update scheduling. The old code gated the fetch on millis() since boot,
+// so a board that reboots every few hours NEVER auto-updated: the 24 h timer was
+// reset on every boot and a manual /fetchnow was the only way to get a new list.
+// Now the gate is the persisted NTP epoch of the last successful swap, with a
+// 30-minute backoff after a failure and a boot grace period so the fetch doesn't
+// compete with WiFi/NTP bring-up.
+static void updateSched() {
+  static uint32_t lastEval = 0;
+  uint32_t now = millis();
+  if (now - lastEval < 60000) return;
+  lastEval = now;
+  if (!updateUrl.length() || now < 120000) return;        // no URL / just booted
+  time_t tt = time(nullptr);
+  if (tt < 1600000000) return;                            // no clock yet (no internet)
+  uint32_t iv = updateIntervalH ? updateIntervalH : 24;
+  if (iv > 720) iv = 720;
+  uint32_t age = (lastUpdEpoch && tt > (time_t)lastUpdEpoch) ? (uint32_t)(tt - lastUpdEpoch) : 0xFFFFFFFF;
+  if (age < iv * 3600UL) return;                          // still fresh enough
+  if (nextUpTryMs && (int32_t)(now - nextUpTryMs) < 0) return;   // backing off
+  bool ok = fetchBlocklist(updateUrl);
+  nextUpTryMs = ok ? 0 : now + 30UL * 60 * 1000;          // retry in 30 min on failure
 }
 
 // ---------- firmware OTA (browser upload of firmware.bin -> reboot) ----------
@@ -957,11 +1091,51 @@ static bool connectWiFi() {
   const char* pass = ss.length() ? pw.c_str() : WIFI_PASS;
   if (!ssid || !*ssid || strcmp(ssid, "YOUR_WIFI_SSID") == 0) return false;  // unconfigured
   Serial.printf("WiFi: connecting to \"%s\"%s\n", ssid, ss.length() ? " (provisioned)" : " (secrets.h)");
-  WiFi.mode(WIFI_STA); WiFi.setSleep(false); WiFi.begin(ssid, pass);
+  WiFi.mode(WIFI_STA); WiFi.setSleep(false); WiFi.setAutoReconnect(true); WiFi.begin(ssid, pass);
   uint32_t t0 = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - t0 < 30000) { delay(250); Serial.print("."); }
   Serial.println();
+  // Modem sleep costs a lot of bulk throughput (TLS list pulls dropped to
+  // ~8 KB/s = one DTIM beacon per chunk). The flag is set before begin() too,
+  // but some cores reset it during association, so repeat it here.
+  if (WiFi.status() == WL_CONNECTED) WiFi.setSleep(false);
   return WiFi.status() == WL_CONNECTED;
+}
+
+// WiFi supervisor. Nothing used to bring the link back after it dropped (router
+// reboot, PMF/rekey, DHCP hiccup): connectWiFi() runs once in setup(), so the
+// board stayed unreachable until someone power-cycled it — the field report
+// "hangs after 5-8 hours". Every loop pass checks the link; a lost association
+// is retried from the provisioned credentials, and a successful rejoin re-binds
+// the DNS socket to be safe.
+static void wifiSupervise() {
+  static bool wasDown = false;
+  if (WiFi.status() == WL_CONNECTED) {
+    if (wasDown) {
+      wasDown = false;
+      Serial.printf("[wifi] back up: %s\n", WiFi.localIP().toString().c_str());
+      WiFi.setSleep(false);                 // association may have re-enabled it
+      dnsServer.stop(); dnsServer.begin(DNS_PORT);
+    }
+    wifiDownAt = 0;
+    return;
+  }
+  uint32_t now = millis();
+  if (!wifiDownAt) { wasDown = true; wifiDownAt = now; Serial.printf("[wifi] link down (status=%d)\n", (int)WiFi.status()); return; }
+  if (now - wifiDownAt < 15000) return;
+  wifiDownAt = now;
+  wifiReconnects++;
+  prefs.begin("wifi", true);
+  String ss = prefs.getString("ssid", ""); String pw = prefs.getString("pass", "");
+  prefs.end();
+  const char* ssid = ss.length() ? ss.c_str() : WIFI_SSID;
+  const char* pass = ss.length() ? pw.c_str() : WIFI_PASS;
+  if (!ssid || !*ssid || strcmp(ssid, "YOUR_WIFI_SSID") == 0) return;   // not provisioned: portal path
+  Serial.printf("[wifi] reconnect #%u to \"%s\"\n", (unsigned)wifiReconnects, ssid);
+  WiFi.disconnect();
+  delay(10);
+  WiFi.begin(ssid, pass);
+  WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, IPAddress(8, 8, 8, 8), IPAddress(1, 1, 1, 1));
 }
 
 static void handlePortalRoot() {
@@ -1023,10 +1197,16 @@ void setup() {
   if (!LittleFS.begin(true)) Serial.println("LittleFS FAILED");
   // Recover from an update that died in the rename window: promote a fully
   // written valid /blocklist.new (legacy fallback: a parked /blocklist.old).
-  if (!LittleFS.exists(BLOCKLIST_PATH)) {
+  // A zero-length live file counts as missing too: the low-space update path
+  // truncates it before writing, so a reboot mid-download would otherwise leave
+  // a valid .new sitting next to an empty live list forever.
+  size_t liveSz = 0;
+  { File lf = LittleFS.open(BLOCKLIST_PATH, "r"); liveSz = lf ? lf.size() : 0; }
+  if (liveSz < (size_t)HASH_BYTES * 1000) {
     size_t nsz = 0;
     { File tf = LittleFS.open("/blocklist.new", "r"); nsz = tf ? tf.size() : 0; }
-    if (nsz > 0 && (nsz % HASH_BYTES) == 0) {
+    if (nsz >= (size_t)HASH_BYTES * 1000 && (nsz % HASH_BYTES) == 0) {
+      LittleFS.remove(BLOCKLIST_PATH);              // a 0-byte leftover blocks the rename
       LittleFS.rename("/blocklist.new", BLOCKLIST_PATH);
       Serial.printf("[boot] promoted completed blocklist.new (%u domains)\n", (unsigned)(nsz / HASH_BYTES));
     } else if (LittleFS.exists("/blocklist.old")) {
@@ -1034,8 +1214,8 @@ void setup() {
       Serial.println("[boot] restored parked blocklist (legacy)");
     }
   }
-  LittleFS.remove("/blocklist.new");   // stale partial from an interrupted update
-  LittleFS.remove("/blocklist.old");   // legacy leftover from the park-era firmware
+  if (LittleFS.exists("/blocklist.new")) LittleFS.remove("/blocklist.new");   // stale partial from an interrupted update
+  if (LittleFS.exists("/blocklist.old")) LittleFS.remove("/blocklist.old");   // legacy leftover from the park-era firmware
   blocklist = LittleFS.open(BLOCKLIST_PATH, "r");
   if (blocklist) {
     numHashes = blocklist.size() / HASH_BYTES;
@@ -1047,6 +1227,7 @@ void setup() {
   dayToday = prefs.getUInt("day", 0); blkToday = prefs.getUInt("blk", 0); alwToday = prefs.getUInt("alw", 0);
   dayYest = prefs.getUInt("yday", 0); blkYest = prefs.getUInt("yblk", 0); alwYest = prefs.getUInt("yalw", 0);
   lastUpdEpoch = prefs.getUInt("upTs", 0);
+  updateStatus = prefs.getString("upst", "never");
   prefs.end();
   Serial.printf("custom: %d, allow: %d, banned: %d\n", numCustom, numAllow, numBanned);
 
@@ -1085,16 +1266,36 @@ void setup() {
   web.on("/favicon.svg", []() { web.send_P(200, "image/svg+xml", FAV_SVG); });
   web.on("/stats.json", handleStats);
   web.on("/health", []() {                          // read-only, unauthenticated (like /stats.json) — for Uptime Kuma/HA
-    char h[220];
+    char h[360];
     snprintf(h, sizeof(h),
-             "{\"status\":\"ok\",\"uptime_s\":%lu,\"uptime\":%lu,\"blocked_today\":%lu,\"allowed_today\":%lu,\"domains\":%u,\"temp\":%.1f,\"heap\":%u,\"rssi\":%d,\"fs_used\":%u,\"fs_total\":%u,\"blocking\":%s}",
-             (unsigned long)(millis() / 1000), (unsigned long)(millis() / 1000), (unsigned long)blkToday,
-             (unsigned long)alwToday, numHashes, temperatureRead(), (unsigned)ESP.getFreeHeap(), WiFi.RSSI(),
-             (uint32_t)LittleFS.usedBytes(), (uint32_t)LittleFS.totalBytes(), blockingOn ? "true" : "false");
+             "{\"status\":\"ok\",\"uptime_s\":%lu,\"blocked_today\":%lu,\"allowed_today\":%lu,\"domains\":%u,\"temp\":%.1f,\"heap\":%u,\"heap_min\":%u,\"rssi\":%d,\"fs_used\":%u,\"fs_total\":%u,\"blocking\":%s,\"fs_ok\":%s,\"wifi\":%s,\"reconnects\":%u}",
+             (unsigned long)(millis() / 1000), (unsigned long)blkToday,
+             (unsigned long)alwToday, numHashes, temperatureRead(), (unsigned)ESP.getFreeHeap(),
+             (unsigned)ESP.getMinFreeHeap(), WiFi.RSSI(),
+             (uint32_t)LittleFS.usedBytes(), (uint32_t)LittleFS.totalBytes(), blockingOn ? "true" : "false",
+             fsOk ? "true" : "false", WiFi.status() == WL_CONNECTED ? "true" : "false", (unsigned)wifiReconnects);
     web.send(200, "application/json", h);
   });
+  web.on("/diag", []() {                             // health of the plumbing: heap/stack/FS/WiFi/counters
+    char d[720];
+    snprintf(d, sizeof(d),
+             "{\"reset\":%d,\"uptime_s\":%lu,\"heap\":%u,\"heap_min\":%u,\"largest\":%u,\"stack_loop\":%u,"
+             "\"domains\":%u,\"fs_ok\":%s,\"fs_read_fail\":%u,\"fs_heal\":%u,\"probe_fail\":%u,"
+             "\"wifi_status\":%d,\"rssi\":%d,\"reconnects\":%u,\"temp\":%.1f,"
+             "\"dns_rx\":%u,\"fwd_done\":%u,\"fwd_expired\":%u,\"fwd_unmatched\":%u,\"reply_drop\":%u,"
+             "\"tx_giveup\":%u,\"tx_qdrop\":%u,\"stall_max_ms\":%u,\"clients\":%d,\"qlog_tot\":%u}",
+             (int)esp_reset_reason(), (unsigned long)(millis() / 1000), (unsigned)ESP.getFreeHeap(),
+             (unsigned)ESP.getMinFreeHeap(), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+             (unsigned)uxTaskGetStackHighWaterMark(NULL),
+             numHashes, fsOk ? "true" : "false", (unsigned)fsReadFail, (unsigned)fsHealN, (unsigned)blProbeFail,
+             (int)WiFi.status(), WiFi.RSSI(), (unsigned)wifiReconnects, temperatureRead(),
+             (unsigned)dnsRx, (unsigned)fwdDone, (unsigned)fwdExpired, (unsigned)fwdUnmatched, (unsigned)replyDrop,
+             (unsigned)txGiveUp, (unsigned)txDropQ, (unsigned)lastStallMs, numClients, (unsigned)qlogTot);
+    web.send(200, "application/json", d);
+  });
   web.on("/hourly", []() {                          // 24 per-hour query totals for the dashboard sparkline
-    String j = "{\"q\":[";
+    String j; j.reserve(400);
+    j = "{\"q\":[";
     for (int i = 0; i < 24; i++) { j += (i ? "," : ""); j += String(hq[i]); }
     j += "],\"b\":[";
     for (int i = 0; i < 24; i++) { j += (i ? "," : ""); j += String(hb[i]); }
@@ -1102,10 +1303,12 @@ void setup() {
     web.send(200, "application/json", j);
   });
   web.on("/topd.json", []() {                       // top blocked domains today (Space-Saving snapshot)
-    TopEnt srt[TOP_K]; int ns = 0;
+    static TopEnt srt[TOP_K];                       // 2 KB — static, not on the loop task's stack
+    int ns = 0;
     for (int i = 0; i < TOP_K; i++) if (top[i].n) srt[ns++] = top[i];
     for (int a = 0; a < ns; a++) for (int b = a + 1; b < ns; b++) if (srt[b].n > srt[a].n) { TopEnt t = srt[a]; srt[a] = srt[b]; srt[b] = t; }
-    String j = "{\"t\":[";
+    String j; j.reserve(96 + ns * 64);
+    j = "{\"t\":[";
     for (int i = 0; i < ns && i < TOP_SHOW; i++) { j += (i ? "," : ""); j += "{\"d\":\"" + jesc(String(srt[i].dom)) + "\",\"n\":" + String(srt[i].n) + "}"; }
     j += "]}";
     web.send(200, "application/json", j);
@@ -1139,9 +1342,13 @@ void setup() {
   web.on("/resume", []() { if (!requireAuth()) return; blockingOn = true; resumeAt = 0; web.send(200, "text/plain", "resumed"); });
   web.on("/forgetwifi", []() { if (!requireAuth()) return; web.send(200, "text/plain", "cleared — rebooting into setup portal");
     prefs.begin("wifi", false); prefs.clear(); prefs.end(); delay(500); ESP.restart(); });
+  web.on("/reboot", []() { if (!requireAuth()) return; web.send(200, "text/plain", "rebooting"); delay(200); ESP.restart(); });
   web.on("/upload", HTTP_POST, handleUploadDone, handleUpload);      // blocklist OTA (auth inside handleUpload)
   web.on("/update", HTTP_POST, handleFwUpdateDone, handleFwUpload);  // firmware OTA (auth inside handleFwUpload)
-  web.on("/fetchnow", []() { if (!requireAuth()) return; fetchBlocklist(updateUrl); web.send(200, "text/plain", updateStatus); });
+  web.on("/fetchnow", []() { if (!requireAuth()) return;
+    if (fetchNowReq) { web.send(200, "text/plain", "already running"); return; }
+    fetchNowReq = true;
+    web.send(200, "text/plain", "started: watch \"upstat\" (the fetch runs in the background)"); });
   web.on("/setupdate", []() {
     if (!requireAuth()) return;
     if (web.hasArg("u")) updateUrl = web.arg("u");
@@ -1156,7 +1363,13 @@ void setup() {
   });
   web.on("/restore", HTTP_POST, handleRestoreDone, handleRestoreUpload);
   web.begin();
-  esp_task_wdt_init(60, true);   // reboot if loop() stalls 60 s (slow TLS/redirect fetches stay under)
+#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
+  { esp_task_wdt_config_t wc = {};                 // core 3.x / IDF 5.x API
+    wc.timeout_ms = 60000; wc.idle_core_mask = 0; wc.trigger_panic = true;
+    if (esp_task_wdt_reconfigure(&wc) != ESP_OK) esp_task_wdt_init(&wc); }
+#else
+  esp_task_wdt_init(60, true);   // core 2.x: reboot if loop() stalls 60 s
+#endif
   esp_task_wdt_add(NULL);
   ArduinoOTA.setHostname("c3adblock");   // pio run -t upload --upload-port c3adblock.local
   ArduinoOTA.setPassword(OTA_PASS);      // network OTA was unauthenticated upstream
@@ -1166,10 +1379,11 @@ void setup() {
 
 void loop() {
   esp_task_wdt_reset();
+  wifiSupervise();                        // rejoin WiFi if the association dropped
   static uint32_t lt0 = millis();
   passN++;
   uint32_t lnow = millis();
-  if (lnow - lt0 > 1200) Serial.printf("[loop] stall %u ms rssi=%d heap=%u\n", lnow - lt0, WiFi.RSSI(), (unsigned)ESP.getFreeHeap());
+  if (lnow - lt0 > 1200) { lastStallMs = lnow - lt0; Serial.printf("[loop] stall %u ms rssi=%d heap=%u\n", (unsigned)lastStallMs, WiFi.RSSI(), (unsigned)ESP.getFreeHeap()); }
   lt0 = lnow;
   static uint32_t lday = 0;
   if (lnow - lday > 5000) { lday = lnow; uint32_t dPrev = dayToday; dailyRoll(); statsFlush(false); if (dayToday != dPrev) { for (int i = 0; i < TOP_K; i++) top[i].n = 0; Serial.println("[top] day rolled - counters reset"); } }
@@ -1189,10 +1403,8 @@ void loop() {
   // NB: pending tx queue alone must NOT suppress the idle sleep — a paused
   // pass is what lets the wifi task drain TX buffers between retry attempts
   if (!blockingOn && resumeAt && (int32_t)(millis() - resumeAt) >= 0) { blockingOn = true; resumeAt = 0; }
-  if (updateUrl.length()) {               // periodic remote blocklist auto-update
-    uint32_t now = millis();
-    if (lastCheckMs == 0) lastCheckMs = now;   // skip an immediate fetch on boot
-    else if (now - lastCheckMs >= updateIntervalH * 3600000UL) { lastCheckMs = now; fetchBlocklist(updateUrl); }
-  }
+  if (fetchNowReq) { fetchNowReq = false; fetchBlocklist(updateUrl); }   // from loop: DNS/web keep working
+  blMaintain();                           // detect a silently dead blocklist and reindex it
+  updateSched();                          // NTP-epoch based list refresh (persists across reboots)
   if (!busy) delay(1);   // sleep only when idle: full speed under load, cool when quiet
 }

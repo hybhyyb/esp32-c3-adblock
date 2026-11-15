@@ -81,7 +81,8 @@ cp src/secrets.example.h src/secrets.h
 #    then edit src/secrets.h
 
 # 2. build the blocklist hash table (default = Hagezi Pro + StevenBlack +
-#    Schakal RU AdList + AdGuard Russian; ~266k entries, RU sites stay usable)
+#    Schakal RU AdList + AdGuard Russian; ~260-290k entries, RU sites stay
+#    usable; the published list is rebuilt daily and drifts with the sources)
 python3 tools/build_blocklist.py data/blocklist.bin
 
 # 3. flash firmware + the blocklist filesystem (the one and only USB flash)
@@ -134,10 +135,13 @@ The dashboard at **http://c3adblock.local** does it all:
   ```
 
 **4 MB flash tradeoff:** this repo ships a **single-app** `partitions.csv` — no network
-firmware OTA (flash firmware over USB), which frees **2.63 MB** for blocklists (**~525k
-domains max**) and leaves room for the daily auto-update to write a fresh list alongside
-the live one. Prefer network firmware OTA? Switch to a dual-OTA table — two app slots
-leave ~1.3 MB for the blocklist (**~250k domains max**).
+firmware OTA (flash firmware over USB), which frees **2.63 MB** for blocklists. The daily
+build is capped at **1.30 MB (~260k domains, `--max-bytes`)** so the device can always write
+the new list *beside* the live one and keep blocking while it updates — the TLS pull runs at
+a few KB/s over WAN, so that update takes minutes and must stay invisible. Raise the cap
+(`--max-bytes 0` disables it) only if you accept that big lists are replaced in place, which
+pauses blocking for the duration of the download. Prefer network firmware OTA? Switch to a
+dual-OTA table — two app slots leave ~1.3 MB for the blocklist.
 
 ## Security
 
@@ -205,7 +209,9 @@ domains, blocklist auto-update, backup/restore, OTA). English variant:
 
 Read-only JSON endpoints for external monitoring: `/stats.json`, `/health`
 (Uptime Kuma / Home Assistant), `/hourly` (24 h sparkline data), `/topd.json`
-(top blocked today).
+(top blocked today), `/diag` (reset reason, heap/stack watermarks, FS read
+failures, WiFi reconnects, DNS/UDP counters — the first thing to check when the
+board misbehaves).
 
 ## Network topology
 
@@ -315,6 +321,25 @@ tradeoff".
   connects (`while(!Serial)` helps).
 - DNS clients add an **EDNS OPT** record; a blocked reply must contain only the
   question + answer (ANCOUNT=1, NSCOUNT=ARCOUNT=0) or it's malformed.
+- **A silent FS read failure used to kill blocking with no trace**: the lookup
+  ignored `seek()/read()` results, so a transient LittleFS hiccup made every
+  domain "allowed" until the next reboot (the dashboard still looked healthy).
+  The firmware now verifies every index/range read, reindexes the list when one
+  fails, and probes the list once a minute; `/health` reports `fs_ok` and
+  `/diag` shows `fs_read_fail` / `fs_heal`.
+- **Wi-Fi never came back after a router reboot / rekey**: nothing re-called
+  `WiFi.begin()`, so the board stayed unreachable until a manual power-cycle
+  ("hangs after 5–8 hours"). A supervisor now retries the association every
+  15 s and re-binds the DNS socket on reconnect (`/diag` → `reconnects`).
+- **Auto-update silently never ran** on a board that reboots more often than
+  the update interval: the 24 h timer lived in `millis()` and reset on every
+  boot. It is now gated by the persisted NTP epoch of the last successful swap
+  (`uplast`), with a 30-minute retry after a failed fetch.
+- **Pin `platform = espressif32@<version>`**: an unpinned value jumps to the
+  next Arduino core major on any `pio run` — re-downloading the toolchain,
+  changing `esp_task_wdt_init()`'s signature and invalidating a tested build.
+  Use `pio run -t upload --upload-port COMx` with the port that is not held by
+  an IDE serial monitor.
 
 ## Done / how it could grow
 

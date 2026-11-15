@@ -30,7 +30,10 @@ jobs:
           echo "size=$size bytes"
           test $((size % 5)) -eq 0                  # whole 40-bit entries
           test "$size" -gt 150000                   # >30k entries, catches a silently shrunk list
-          test "$size" -lt 1450000                  # fits the single-app filesystem partition
+          # tools/build_blocklist.py caps the blob at 1.30 MB so the device can
+          # always write the new list beside the live one (2x on a 2.63 MB
+          # LittleFS) and never has to disable blocking during an update.
+          test "$size" -le 1300000
       - name: Publish to the 'blocklist' release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -43,6 +46,6 @@ jobs:
           if gh release view blocklist >/dev/null 2>&1; then
             gh release edit blocklist --notes "$notes"
           else
-            gh release create blocklist --title "Weekly blocklist" --notes "$notes" --latest=false
+            gh release create blocklist --title "Daily blocklist" --notes "$notes" --latest=false
           fi
           gh release upload blocklist blocklist.bin --clobber

@@ -25,6 +25,14 @@ FNV_OFFSET = 0xcbf29ce484222325
 FNV_PRIME  = 0x100000001b3
 U64 = (1 << 64) - 1
 
+# Keep the blob small enough for the device to update SAFELY: it writes the new
+# list to /blocklist.new while the live one keeps serving, so the filesystem
+# needs ~2x the list size. On the shipped 2.63 MB LittleFS that means <= ~1.3 MB
+# (one entry is 5 bytes -> ~260k domains). A bigger blob still works, but the
+# device has to truncate the live list first, which turns blocking off for the
+# whole (slow) download. Override with --max-bytes; 0 disables the cap.
+MAX_BYTES = 1_300_000
+
 # Daily-driver set for the single-app (no-OTA) partition: ads/trackers/malware
 # worldwide (Hagezi Pro + StevenBlack base) plus the RU segment (AdGuard Russian
 # filter + Schakal's RU AdList/EasyList conversion). ~260k domains / ~1.3 MB.
@@ -60,12 +68,18 @@ def main():
     global ALLOW_MISSING
     args = [a for a in sys.argv[1:] if a != '--allow-missing']
     ALLOW_MISSING = '--allow-missing' in sys.argv[1:]
+    max_bytes = MAX_BYTES
+    for a in list(args):
+        if a.startswith('--max-bytes'):
+            args.remove(a)
+            max_bytes = int(a.split('=', 1)[1]) if '=' in a else 0
     out = args[0] if args else 'blocklist.bin'
     sources = args[1:] if len(args) > 1 else DEFAULT_SOURCES
 
     domains, allow = set(), set()
+    prio = {}                     # domain -> index of the first source that listed it
     skipped = 0
-    for src in sources:
+    for si, src in enumerate(sources):
         try:
             data = read_source(src)
         except Exception as e:
@@ -95,7 +109,11 @@ def main():
             if m:
                 if m.group(3):            # has $modifiers (client/dnstype/etc.) -> can't express, skip
                     skipped += 1; continue
-                (allow if m.group(1) else domains).add(norm(m.group(2)))
+                d = norm(m.group(2))
+                if m.group(1):
+                    allow.add(d)
+                else:
+                    domains.add(d); prio.setdefault(d, si)
                 continue
             if line.startswith(('||', '@@', '|', '/')) or any(c in line for c in '^$*'):
                 skipped += 1; continue    # other adblock syntax (regex, wildcards, cosmetic) -> skip
@@ -107,12 +125,23 @@ def main():
             for d in entries:
                 d = norm(d)
                 if '.' in d and ' ' not in d:
-                    domains.add(d)
+                    domains.add(d); prio.setdefault(d, si)
     if allow:
         before = len(domains); domains -= allow
         print(f'allowlisted      : {before - len(domains):,} removed ({len(allow):,} @@ rules)', file=sys.stderr)
     if skipped:
         print(f'skipped rules    : {skipped:,} (adblock syntax that a DNS hash list cannot express)', file=sys.stderr)
+
+    # Deterministic size cap: keep the domains from the earliest (highest-priority)
+    # sources first, then fill with hashes in a stable order. This is what lets the
+    # device update side-by-side without ever turning blocking off.
+    if max_bytes:
+        maxe = max_bytes // HASH_BYTES
+        if len(domains) > maxe:
+            kept = sorted(domains, key=lambda d: (prio.get(d, 10 ** 9), fnv(d.encode())))[:maxe]
+            print(f'capped           : {len(domains):,} -> {len(kept):,} domains '
+                  f'({max_bytes:,} B budget; earliest sources win)', file=sys.stderr)
+            domains = set(kept)
 
     hashes = sorted(fnv(d.encode()) for d in domains)
     collisions = len(hashes) - len(set(hashes))
