@@ -172,7 +172,8 @@ function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;',
 const CSRF_HDRS={'X-Requested-With':'c3-adblock'}
 function showTab(t){document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('on',b.dataset.tab===t));document.querySelectorAll('.sec').forEach(s=>s.classList.toggle('on',s.id==='sec-'+t));}
 function togglePause(){fetch(blockstate.dataset.on=='1'?'/pause?s='+pausedur.value:'/resume',{headers:CSRF_HDRS}).then(load);}
-async function load(){let s=await(await fetch('/stats.json')).json();
+let qlogAt=0;
+async function load(){if(document.hidden)return;let s=await(await fetch('/stats.json')).json();
 host.textContent='@ '+s.ip;
 cw.style.display=s.defcreds?'block':'none';
 let on=s.blocking!==false;blockstate.dataset.on=on?'1':'0';
@@ -199,7 +200,7 @@ if(document.activeElement!=uurl)uurl.value=s.upurl||'';
 if(document.activeElement!=uiv)uiv.value=s.upiv||24;
 if(document.activeElement!=tzin)tzin.value=s.tz||'';
 if(s.today&&s.yest)qday.textContent=t('qdayBody').replace('{b}',fmt(s.today.blk)).replace('{a}',fmt(s.today.alw)).replace('{b2}',fmt(s.yest.blk)).replace('{a2}',fmt(s.yest.alw));
-ustat.textContent=s.upstat||'—';loadQlog();}
+ustat.textContent=s.upstat||'—';if(Date.now()-qlogAt>15000){qlogAt=Date.now();loadQlog();}}
 let qlast=null,qlfail=0;
 async function loadQlog(){if(qlfail)return;try{qlast=await(await fetch('/qlog.json',{headers:CSRF_HDRS})).json();renderQlog();}catch(_){qlfail=1;}}   // 401 until authenticated once — stop polling, reload re-enables
 function renderQlog(){if(!qlast)return;let fl=qf.value,ss=qsearch.value.trim().toLowerCase();
@@ -239,5 +240,10 @@ catch(_){rsmsg.textContent='✗';}
 rsfile.value='';setTimeout(load,600);};
 async function loadTop(){try{let d=await(await fetch('/topd.json')).json();if(!d.t.length){topl.textContent=t('topEmpty');return;}
 topl.innerHTML=d.t.map((x,i)=>`<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid #21262d;font-size:13px;align-items:baseline"><span style="color:#8b949e;min-width:22px">${i+1}</span><span style="flex:1;overflow-wrap:anywhere">${esc(x.d)}</span><span class=b>${fmt(x.n)}</span></div>`).join('');}catch(_){}}
-setLang(l);setInterval(load,3000);loadHour();setInterval(loadHour,60000);loadTop();setInterval(loadTop,60000);
+// 5 s polling (not 3 s) and nothing at all while the tab is hidden: the ESP32's
+// WebServer is blocking and single-threaded, so every idle/duplicate keep-alive
+// socket can cost it a 1 s read timeout. A dashboard left open in a background
+// tab used to keep the board so busy that other pages looked "down".
+setLang(l);setInterval(load,5000);loadHour();setInterval(loadHour,60000);loadTop();setInterval(loadTop,120000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden){load();loadHour();loadTop();}});
 </script></body></html>)HTML";
