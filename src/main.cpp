@@ -1261,7 +1261,7 @@ void setup() {
                     "device on a network you don't fully control.");
 
   dnsServer.begin(DNS_PORT); upstreamCli.begin(0);
-  { const char* hdrs[] = { CSRF_HEADER, "Content-Length" }; web.collectHeaders(hdrs, 2); }  // CSRF for requireAuth(), CL for upload space check
+  { const char* hdrs[] = { CSRF_HEADER, "Content-Length", "Accept" }; web.collectHeaders(hdrs, 3); }  // CSRF, upload space check, /diag HTML vs JSON
   web.on("/", []() { web.send_P(200, "text/html", PAGE); });
   web.on("/favicon.svg", []() { web.send_P(200, "image/svg+xml", FAV_SVG); });
   web.on("/stats.json", handleStats);
@@ -1291,6 +1291,45 @@ void setup() {
              (int)WiFi.status(), WiFi.RSSI(), (unsigned)wifiReconnects, temperatureRead(),
              (unsigned)dnsRx, (unsigned)fwdDone, (unsigned)fwdExpired, (unsigned)fwdUnmatched, (unsigned)replyDrop,
              (unsigned)txGiveUp, (unsigned)txDropQ, (unsigned)lastStallMs, numClients, (unsigned)qlogTot);
+    // A browser asks for text/html here and used to show raw JSON (or download
+    // it); render a small read-only table instead. curl/monitoring gets JSON.
+    if (web.header("Accept").indexOf("text/html") >= 0) {
+      static const char* RST[] = { "unknown", "power-on", "external", "software", "panic",
+                                   "int-wdt", "task-wdt", "wdt", "deep-sleep", "brownout" };
+      int rr = (int)esp_reset_reason();
+      String h; h.reserve(1800);
+      h += "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>"
+           "<title>C3 AdBlock - diag</title>"
+           "<body style='font:14px system-ui,sans-serif;background:#0d1117;color:#c9d1d9;padding:18px;max-width:640px'>"
+           "<h2 style='margin:0 0 14px'>C3 AdBlock &mdash; diagnostics</h2>"
+           "<table style='border-collapse:collapse;width:100%'>";
+      auto row = [&](const char* k, const String& v) {
+        h += "<tr><td style='padding:5px 12px 5px 0;color:#8b949e;white-space:nowrap'>"; h += k;
+        h += "</td><td style='padding:5px 0;font-family:ui-monospace,monospace'>"; h += v; h += "</td></tr>";
+      };
+      row("uptime", String((unsigned long)(millis() / 1000)) + " s");
+      row("reset reason", String(RST[rr >= 0 && rr <= 9 ? rr : 0]) + " (" + String(rr) + ")");
+      row("domains in list", String(numHashes));
+      row("list health", String(fsOk ? "ok" : "BAD") + " (read fail " + String(fsReadFail) +
+          ", heals " + String(fsHealN) + ", probe fails " + String(blProbeFail) + ")");
+      row("heap now / min / largest", String((unsigned)ESP.getFreeHeap()) + " / " + String((unsigned)ESP.getMinFreeHeap()) +
+          " / " + String((unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)) + " B");
+      row("loop stack headroom", String((unsigned)uxTaskGetStackHighWaterMark(NULL)) + " words");
+      row("WiFi", String((int)WiFi.status()) + " (3 = connected), rssi " + String(WiFi.RSSI()) +
+          ", reconnects " + String((unsigned)wifiReconnects));
+      row("temperature", String(temperatureRead(), 1) + " &deg;C");
+      row("DNS rx / forwarded / expired / unmatched", String((unsigned)dnsRx) + " / " + String((unsigned)fwdDone) +
+          " / " + String((unsigned)fwdExpired) + " / " + String((unsigned)fwdUnmatched));
+      row("reply drops / tx giveups / queue drops", String((unsigned)replyDrop) + " / " + String((unsigned)txGiveUp) +
+          " / " + String((unsigned)txDropQ));
+      row("longest loop pass", String((unsigned)lastStallMs) + " ms");
+      row("clients / logged queries", String(numClients) + " / " + String((unsigned)qlogTot));
+      h += "</table><p style='margin-top:16px;color:#8b949e'>JSON: <code>/diag</code> &middot; "
+           "<a style='color:#58a6ff' href='/health'>/health</a> &middot; "
+           "<a style='color:#58a6ff' href='/'>dashboard</a></p></body>";
+      web.send(200, "text/html", h);
+      return;
+    }
     web.send(200, "application/json", d);
   });
   web.on("/hourly", []() {                          // 24 per-hour query totals for the dashboard sparkline
